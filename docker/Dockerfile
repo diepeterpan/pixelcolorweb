@@ -15,23 +15,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy pypixelcolor source and install it
-COPY pypixelcolor/ /app/pypixelcolor/
-RUN pip install --no-cache-dir -e /app/pypixelcolor/pypixelcolor-main
-
-# Install FastAPI and Web dependencies
-RUN pip install --no-cache-dir \
-    fastapi \
-    "uvicorn[standard]" \
-    pillow \
-    pydantic \
-    jinja2 \
-    python-multipart \
-    aiofiles \
-    requests \
-    bleak \
-    crccheck \
-    dbus-fast
+# Copy requirements and install dependencies directly from PyPI
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # Copy application source
 COPY src/ /app/src/

@@ -62,30 +62,9 @@ if [ ! -d "${VENV_DIR}" ] || [ ! -f "${VENV_DIR}/bin/activate" ]; then
     echo "[INFO] Creating virtual environment (.venv)..."
     python3 -m venv "${VENV_DIR}"
     
-    echo "[INFO] Upgrading pip and installing required dependencies..."
+    echo "[INFO] Upgrading pip and installing required dependencies from requirements.txt..."
     "${VENV_DIR}/bin/pip" install --upgrade pip
-    
-    # Install pypixelcolor package
-    if [ -d "${PROJECT_DIR}/pypixelcolor/pypixelcolor-main" ]; then
-        "${VENV_DIR}/bin/pip" install -e "${PROJECT_DIR}/pypixelcolor/pypixelcolor-main"
-    elif [ -f "${PROJECT_DIR}/pypixelcolor/pixelcolor.zip" ]; then
-        unzip -q -o "${PROJECT_DIR}/pypixelcolor/pixelcolor.zip" -d "${PROJECT_DIR}/pypixelcolor/"
-        "${VENV_DIR}/bin/pip" install -e "${PROJECT_DIR}/pypixelcolor/pypixelcolor-main"
-    fi
-
-    # Install Web and BLE dependencies
-    "${VENV_DIR}/bin/pip" install \
-        fastapi \
-        "uvicorn[standard]" \
-        pillow \
-        pydantic \
-        jinja2 \
-        python-multipart \
-        aiofiles \
-        requests \
-        bleak \
-        crccheck \
-        dbus-fast
+    "${VENV_DIR}/bin/pip" install -r "${PROJECT_DIR}/requirements.txt"
 else
     echo "[INFO] Found existing virtual environment at ${VENV_DIR}."
 fi
