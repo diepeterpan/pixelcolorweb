@@ -1,0 +1,6 @@
+{
+  "id": "system_status",
+  "name": "Dynamic Greeting",
+  "description": "Changes text greeting based on hour of the day",
+  "code": "def get_text():\n    hour = datetime.now().hour\n    if hour < 12:\n        greeting = \"GOOD MORNING!\"\n    elif hour < 18:\n        greeting = \"GOOD AFTERNOON!\"\n    else:\n        greeting = \"GOOD EVENING!\"\n    return f\"{greeting}  |  {datetime.now().strftime('%H:%M')}\"\n"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "custom_msg",
+  "text": "\u23f0<default_clock.py>",
+  "font_id": "DejaVuSans",
+  "font_size": 10,
+  "text_color": "#ffffff",
+  "bg_color": "#000000",
+  "alignment": "center",
+  "antialias": false,
+  "v_alignment": "middle",
+  "refresh_interval": 1,
+  "id": "custom_msg"
+}

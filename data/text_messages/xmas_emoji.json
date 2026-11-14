@@ -1,0 +1,13 @@
+{
+  "name": "xmas_emoji",
+  "text": "\ud83c\udf84\u26c4\ud83c\udf81\ud83d\udd14\ud83c\udf85\u2744\ufe0f",
+  "font_id": "PressStart2P",
+  "font_size": 11,
+  "text_color": "#00ff62",
+  "bg_color": "#000000",
+  "alignment": "center",
+  "antialias": false,
+  "v_alignment": "middle",
+  "refresh_interval": 0,
+  "id": "xmas_emoji"
+}

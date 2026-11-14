@@ -1,0 +1,18 @@
+services:
+  pixelweb:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: pixelcolorweb
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    volumes:
+      # Pass through DBus system socket and devices for host BLE
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      - /dev:/dev
+      # Persistent configuration, uploaded images, scripts, and fonts
+      - ../data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+

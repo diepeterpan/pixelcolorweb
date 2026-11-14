@@ -1,0 +1,11 @@
+{
+  "name": "Test ABC and a Emoji",
+  "text": "ABCDEFGHIJ\ud83d\ude80",
+  "font_id": "PressStart2P",
+  "font_size": 8,
+  "text_color": "#ffffff",
+  "bg_color": "#000000",
+  "alignment": "center",
+  "antialias": false,
+  "id": "test_abc_and_a_emoji"
+}

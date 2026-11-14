@@ -1,0 +1,13 @@
+{
+  "name": "XMAS",
+  "text": "<holy2.jpg>Merry XMAS",
+  "font_id": "PressStart2P",
+  "font_size": 8,
+  "text_color": "#00ff62",
+  "bg_color": "#000000",
+  "alignment": "center",
+  "antialias": false,
+  "v_alignment": "bottom",
+  "refresh_interval": 0,
+  "id": "xmas"
+}

@@ -1,0 +1,198 @@
+:root {
+  --bg-main: #f8fafc;
+  --bg-card: #ffffff;
+  --text-main: #0f172a;
+  --text-muted: #64748b;
+  --border-subtle: #e2e8f0;
+  
+  /* Rainbow Vivid Gradient: full rich visible spectrum (Red -> Orange -> Yellow -> Green -> Cyan -> Blue -> Purple -> Magenta) */
+  --rainbow-gradient: linear-gradient(115deg, #e11d48 0%, #f97316 16%, #eab308 30%, #10b981 46%, #06b6d4 62%, #3b82f6 76%, #8b5cf6 88%, #d946ef 100%);
+  --rainbow-glow: 0 4px 20px rgba(225, 29, 72, 0.25), 0 2px 10px rgba(59, 130, 246, 0.25);
+
+  /* 3D Soft-tactile effects */
+  --shadow-3d-card: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 10px 15px -3px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --shadow-3d-btn: 0 4px 6px rgba(50, 50, 93, 0.11), 0 1px 3px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  --shadow-3d-btn-active: inset 0 3px 5px rgba(0,0,0,0.15), 0 1px 2px rgba(0,0,0,0.05);
+}
+
+body {
+  background-color: var(--bg-main);
+  color: var(--text-main);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+}
+
+/* Subtle, slightly rounded corners (4px to 6px) */
+.rounded-subtle {
+  border-radius: 6px;
+}
+
+/* 3D Tactile Card */
+.card-3d {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  box-shadow: var(--shadow-3d-card);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.card-3d:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px -2px rgba(0, 0, 0, 0.08), 0 2px 6px -1px rgba(0, 0, 0, 0.04);
+}
+
+/* 3D Tactile Button */
+.btn-3d {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 0.5rem 1rem;
+  box-shadow: var(--shadow-3d-btn);
+  border: 1px solid rgba(0,0,0,0.08);
+  cursor: pointer;
+  transition: all 0.1s ease-in-out;
+}
+
+.btn-3d:hover {
+  filter: brightness(1.05);
+  transform: translateY(-1px);
+}
+
+.btn-3d:active {
+  transform: translateY(1px);
+  box-shadow: var(--shadow-3d-btn-active);
+}
+
+/* Rainbow Vivid Accents */
+.rainbow-bar {
+  height: 4px;
+  background: var(--rainbow-gradient);
+  background-size: 200% 200%;
+  animation: rainbow-shift 6s linear infinite;
+}
+
+.rainbow-badge {
+  background: var(--rainbow-gradient);
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+  font-weight: 700;
+  border-radius: 4px;
+  padding: 2px 8px;
+}
+
+.rainbow-btn {
+  background: var(--rainbow-gradient);
+  background-size: 200% 200%;
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+  border: none;
+}
+
+.rainbow-btn:hover {
+  background-position: 100% 50%;
+  box-shadow: 0 4px 12px rgba(255, 0, 127, 0.35);
+}
+
+/* Unified Action Button System */
+/* Save Buttons: Consistent emerald/green 3D styling */
+.btn-save {
+  background: #ffffff;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+  box-shadow: 0 2px 4px rgba(5, 150, 105, 0.08);
+}
+.btn-save:hover {
+  background: #ecfdf5;
+  color: #065f46;
+  border-color: #6ee7b7;
+}
+
+/* Load / Edit Buttons: Consistent blue/slate 3D styling */
+.btn-load {
+  background: #ffffff;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+  box-shadow: 0 2px 4px rgba(51, 65, 85, 0.06);
+}
+.btn-load:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+  border-color: #94a3b8;
+}
+
+/* Delete / Remove Buttons: Consistent red/rose 3D styling */
+.btn-del {
+  background: #fff5f5;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+  box-shadow: 0 2px 4px rgba(220, 38, 38, 0.06);
+}
+.btn-del:hover {
+  background: #fee2e2;
+  color: #b91c1c;
+  border-color: #fca5a5;
+}
+
+/* Action Buttons (Not Save, Load, Del): Unique Rainbow Glow Styling with full visible spectrum */
+.btn-action-rainbow {
+  background: var(--rainbow-gradient);
+  background-size: 150% 150%;
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.45);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 3px 8px rgba(225, 29, 72, 0.22), 0 2px 6px rgba(59, 130, 246, 0.2);
+  transition: all 0.25s ease;
+}
+.btn-action-rainbow:hover {
+  background-position: 100% 50%;
+  box-shadow: 0 5px 15px rgba(225, 29, 72, 0.35), 0 3px 8px rgba(6, 182, 212, 0.35);
+  transform: translateY(-1px);
+}
+
+@keyframes rainbow-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* Simulated LED Matrix Grid */
+.led-matrix-container {
+  background: #000000;
+  border: 2px solid #1e293b;
+  border-radius: 6px;
+  padding: 2px;
+  box-shadow: inset 0 0 10px rgba(0,0,0,0.9), 0 4px 12px rgba(0,0,0,0.25);
+  display: inline-flex;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.led-grid {
+  display: grid;
+  grid-template-rows: repeat(16, 7px);
+  grid-auto-columns: 7px;
+  grid-auto-flow: column;
+  gap: 1.5px;
+  background: #050508;
+  padding: 4px;
+  border-radius: 4px;
+  width: max-content;
+  margin: 0 auto;
+}
+
+.led-dot {
+  width: 7px;
+  height: 7px;
+  background: #111420;
+  border-radius: 50%;
+  transition: background-color 0.05s ease;
+}
+
+.led-dot.active {
+  box-shadow: 0 0 4px currentColor;
+}
+

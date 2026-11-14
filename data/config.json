@@ -1,0 +1,69 @@
+{
+  "device": {
+    "address": "31:6C:93:E6:5D:12",
+    "name": "LED_BLE_93E65D12",
+    "auto_connect": true,
+    "connected": true
+  },
+  "matrix": {
+    "width": 96,
+    "height": 16,
+    "brightness": 0,
+    "orientation": 0,
+    "power": false
+  },
+  "mode": "text_message",
+  "text": {
+    "content": "Testing 1.2.3",
+    "color": "#00ff62",
+    "bg_color": "#000000",
+    "rainbow_mode": 1,
+    "animation": 0,
+    "speed": 80,
+    "font": "UNIFONT",
+    "save_slot": 0
+  },
+  "active_script_id": "rainbow_welcome",
+  "active_image": "data/temp/active_matrix_frame.png",
+  "clock": {
+    "style": 1,
+    "show_date": true,
+    "format_24": true
+  },
+  "schedule": {
+    "enabled": false,
+    "slots": [
+      {
+        "id": "slot_1794662496540",
+        "name": "Test",
+        "start_time": "08:00",
+        "end_time": "12:00",
+        "type": "text_message",
+        "config_id": "custom_msg",
+        "config_name": "custom_msg (\"\u23f0<default_clock.py>\")"
+      },
+      {
+        "id": "slot_1794663776110",
+        "name": "Mine",
+        "start_time": "09:00",
+        "end_time": "12:00",
+        "type": "text_message",
+        "config_id": "test_abc_and_a_emoji",
+        "config_name": "Test ABC and a Emoji (\"ABCDEFGHIJ\ud83d\ude80\")"
+      }
+    ]
+  },
+  "presets": [],
+  "active_text_message": {
+    "name": "custom_msg",
+    "text": "\ud83c\udf84\u26c4\ud83c\udf81\ud83d\udd14\ud83c\udf85\u2744\ufe0f",
+    "font_id": "PressStart2P",
+    "font_size": 11,
+    "text_color": "#00ff62",
+    "bg_color": "#000000",
+    "alignment": "center",
+    "antialias": false,
+    "refresh_interval": 0,
+    "v_alignment": "middle"
+  }
+}
