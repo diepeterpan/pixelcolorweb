@@ -1,3 +1,4 @@
+import io
 import math
 import os
 import shutil
@@ -12,7 +13,21 @@ TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 class ImageManager:
     def __init__(self):
-        pass
+        # In-memory store for temporary editing layers and previews
+        self._mem_cache: Dict[str, bytes] = {}
+
+    def get_in_memory_image(self, filename: str) -> Optional[bytes]:
+        """Retrieve in-memory image bytes if present."""
+        return self._mem_cache.get(filename)
+
+    def set_in_memory_image(self, filename: str, data: bytes) -> None:
+        """Store in-memory image bytes, keeping cache size bounded."""
+        self._mem_cache[filename] = data
+        if len(self._mem_cache) > 20:
+            # Evict oldest entries
+            oldest_keys = list(self._mem_cache.keys())[:5]
+            for k in oldest_keys:
+                self._mem_cache.pop(k, None)
 
     def list_images(self) -> List[Dict[str, Any]]:
         """
@@ -50,6 +65,8 @@ class ImageManager:
         return None
 
     def delete_image(self, filename: str) -> bool:
+        if filename in self._mem_cache:
+            del self._mem_cache[filename]
         target = UPLOAD_DIR / filename
         if target.exists():
             target.unlink()
@@ -186,11 +203,16 @@ class ImageManager:
         antialias: bool = True,
         is_temporary: bool = False
     ) -> Dict[str, Any]:
-        src_path = self.get_image_path(source_filename)
-        if not src_path or not src_path.exists():
-            raise FileNotFoundError(f"File {source_filename} not found")
+        # Check in-memory cache first, then disk
+        if source_filename in self._mem_cache:
+            img = Image.open(io.BytesIO(self._mem_cache[source_filename]))
+        else:
+            src_path = self.get_image_path(source_filename)
+            if not src_path or not src_path.exists():
+                raise FileNotFoundError(f"File {source_filename} not found")
+            img = Image.open(src_path)
 
-        with Image.open(src_path) as img:
+        with img:
             img = img.convert("RGBA")
 
             # 1. Crop if specified
@@ -221,26 +243,29 @@ class ImageManager:
             if not any(clean_name.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".webp"]):
                 clean_name += ".png"
 
-            # Route to data/temp if temporary preview, otherwise data/uploads
-            target_dir = TEMP_DIR if is_temporary or clean_name.startswith("__") else UPLOAD_DIR
-            dest_path = target_dir / clean_name
-            img.save(dest_path, "PNG")
+            # Check if this is a temporary edit/layer or a permanent save
+            is_temp = is_temporary or clean_name.startswith("__")
 
-            # Clean up old temp files (keep only latest 5 temp files)
-            if target_dir == TEMP_DIR:
-                try:
-                    temp_files = sorted(TEMP_DIR.glob("__temp_*"), key=lambda p: p.stat().st_mtime)
-                    if len(temp_files) > 5:
-                        for old in temp_files[:-5]:
-                            old.unlink(missing_ok=True)
-                except Exception:
-                    pass
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            img_bytes = buf.getvalue()
+
+            if is_temp:
+                # Keep completely in memory
+                self.set_in_memory_image(clean_name, img_bytes)
+                file_size = len(img_bytes)
+            else:
+                # Permanent save directly to UPLOAD_DIR
+                dest_path = UPLOAD_DIR / clean_name
+                with open(dest_path, "wb") as f:
+                    f.write(img_bytes)
+                file_size = dest_path.stat().st_size
 
             return {
                 "filename": clean_name,
                 "width": img.width,
                 "height": img.height,
-                "size": dest_path.stat().st_size
+                "size": file_size
             }
 
 image_manager = ImageManager()

@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile, Response
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -244,6 +244,11 @@ async def list_images():
 
 @app.get("/api/images/{filename}")
 async def get_image_file(filename: str):
+    # Check in-memory store first (for temporary layers/previews)
+    mem_bytes = image_manager.get_in_memory_image(filename)
+    if mem_bytes is not None:
+        return Response(content=mem_bytes, media_type="image/png")
+
     p = image_manager.get_image_path(filename)
     if not p:
         raise HTTPException(status_code=404, detail="Image not found")
@@ -367,10 +372,11 @@ async def send_text_message(payload: TextMessageRenderPayload):
         antialias=payload.antialias,
         v_alignment=payload.v_alignment
     )
-    # Save into dedicated temp directory rather than cluttering uploads
-    out_filename = f"active_matrix_frame.png"
-    out_path = TEMP_DIR / out_filename
-    img.save(out_path, format="PNG")
+    # Store in-memory frame bytes directly
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    img_bytes = buf.getvalue()
+    image_manager.set_in_memory_image("active_matrix_frame.png", img_bytes)
 
     # Extract pixels for simulator sync
     pixels = []
@@ -385,11 +391,10 @@ async def send_text_message(payload: TextMessageRenderPayload):
     # Store text_message configuration for live background refreshing
     config_manager.update({
         "mode": "text_message",
-        "active_text_message": payload.dict(),
-        "active_image": str(out_path)
+        "active_text_message": payload.dict()
     })
 
-    ok = await ble_worker.send_image(str(out_path))
+    ok = await ble_worker.send_image_bytes(img_bytes, file_ext=".png")
     return {
         "success": ok,
         "content_width": content_w,
