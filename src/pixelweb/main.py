@@ -1,7 +1,8 @@
+import asyncio
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, File, HTTPException, UploadFile, Response
+from typing import Any, Dict, List, Optional, Set
+from fastapi import FastAPI, File, HTTPException, UploadFile, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -91,6 +92,9 @@ class TextMessageRenderPayload(BaseModel):
     antialias: bool = False
     v_alignment: str = "middle" # "top", "middle", "bottom"
     refresh_interval: int = 0 # In seconds, 0 = static (no dynamic refresh)
+    scroll_enabled: bool = False
+    scroll_direction: str = "rtl" # "rtl" (Right to Left) or "ltr" (Left to Right)
+    scroll_speed: int = 80 # Milliseconds per pixel step (min 80)
 
 @app.on_event("startup")
 async def on_startup():
@@ -121,7 +125,41 @@ async def update_config(updates: Dict[str, Any]):
 # Status & Hardware
 @app.get("/api/status")
 async def get_status():
-    return ble_worker.last_status
+    status = dict(ble_worker.last_status)
+    status["scroll_metrics"] = scheduler_service.scroll_metrics
+    return status
+
+# WebSocket Connection Manager for Live Hardware Simulator Synchronization
+active_ws_clients: Set[WebSocket] = set()
+
+def _on_scheduler_frame_sync(event_data: Dict[str, Any]):
+    if not active_ws_clients:
+        return
+    # Broadcast asynchronously without blocking the BLE thread
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            for ws in list(active_ws_clients):
+                asyncio.create_task(ws.send_json(event_data))
+    except Exception:
+        pass
+
+scheduler_service.register_sync_listener(_on_scheduler_frame_sync)
+
+@app.websocket("/ws/matrix-sync")
+async def websocket_matrix_sync(websocket: WebSocket):
+    await websocket.accept()
+    active_ws_clients.add(websocket)
+    try:
+        while True:
+            # Keepalive receiver
+            _ = await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        active_ws_clients.discard(websocket)
 
 @app.post("/api/power")
 async def set_power(on: bool = True):
@@ -311,6 +349,7 @@ async def get_config_by_id(config_id: str):
 
 @app.post("/api/text-message/preview")
 async def preview_text_message(payload: TextMessageRenderPayload):
+    # If scroll_enabled is True, render full-width canvas
     img, content_w = render_text_message(
         text=payload.text,
         width=96,
@@ -321,19 +360,22 @@ async def preview_text_message(payload: TextMessageRenderPayload):
         bg_color=payload.bg_color,
         alignment=payload.alignment,
         antialias=payload.antialias,
-        v_alignment=payload.v_alignment
+        v_alignment=payload.v_alignment,
+        full_width=payload.scroll_enabled
     )
     buf = BytesIO()
     img.save(buf, format="PNG")
     b64_data = base64.b64encode(buf.getvalue()).decode("utf-8")
-    fits = content_w <= 96
+    fits = content_w <= 96 or payload.scroll_enabled
 
-    # Extract RGB raw pixel array (96x16) for virtual simulator
+    # Extract RGB raw pixel array for virtual simulator
+    # If full_width, extract all columns so the frontend can animate smoothly
     pixels = []
     rgb_img = img.convert("RGB")
-    for y in range(16):
+    img_w, img_h = rgb_img.size
+    for y in range(img_h):
         row = []
-        for x in range(96):
+        for x in range(img_w):
             r, g, b = rgb_img.getpixel((x, y))
             row.append([r, g, b])
         pixels.append(row)
@@ -343,8 +385,12 @@ async def preview_text_message(payload: TextMessageRenderPayload):
         "preview_url": f"data:image/png;base64,{b64_data}",
         "pixels": pixels,
         "content_width": content_w,
+        "canvas_width": img_w,
         "max_width": 96,
-        "fits_hardware": fits
+        "fits_hardware": fits,
+        "scroll_enabled": payload.scroll_enabled,
+        "scroll_direction": payload.scroll_direction,
+        "scroll_speed": payload.scroll_speed
     }
 
 @app.post("/api/text-message/save")
@@ -360,6 +406,13 @@ async def delete_config(config_id: str):
 
 @app.post("/api/text-message/send")
 async def send_text_message(payload: TextMessageRenderPayload):
+    # Store text_message configuration for live background refreshing & scrolling
+    config_manager.update({
+        "mode": "text_message",
+        "active_text_message": payload.dict()
+    })
+
+    # Render initial frame
     img, content_w = render_text_message(
         text=payload.text,
         width=96,
@@ -370,36 +423,43 @@ async def send_text_message(payload: TextMessageRenderPayload):
         bg_color=payload.bg_color,
         alignment=payload.alignment,
         antialias=payload.antialias,
-        v_alignment=payload.v_alignment
+        v_alignment=payload.v_alignment,
+        full_width=payload.scroll_enabled
     )
-    # Store in-memory frame bytes directly
+
+    rgb_img = img.convert("RGB")
+    img_w, img_h = rgb_img.size
+
+    # If scrolling is enabled, take the first 96x16 window slice to display initially
+    if payload.scroll_enabled:
+        first_frame = rgb_img.crop((0, 0, 96, 16)) if payload.scroll_direction == "rtl" else rgb_img.crop((max(0, img_w - 96), 0, max(0, img_w - 96) + 96, 16))
+    else:
+        first_frame = rgb_img
+
     buf = BytesIO()
-    img.save(buf, format="PNG")
+    first_frame.save(buf, format="PNG", optimize=True, compress_level=9)
     img_bytes = buf.getvalue()
     image_manager.set_in_memory_image("active_matrix_frame.png", img_bytes)
 
-    # Extract pixels for simulator sync
+    # Extract pixels for simulator sync (full canvas so frontend simulator can also animate)
     pixels = []
-    rgb_img = img.convert("RGB")
-    for y in range(16):
+    for y in range(img_h):
         row = []
-        for x in range(96):
+        for x in range(img_w):
             r, g, b = rgb_img.getpixel((x, y))
             row.append([r, g, b])
         pixels.append(row)
-
-    # Store text_message configuration for live background refreshing
-    config_manager.update({
-        "mode": "text_message",
-        "active_text_message": payload.dict()
-    })
 
     ok = await ble_worker.send_image_bytes(img_bytes, file_ext=".png")
     return {
         "success": ok,
         "content_width": content_w,
+        "canvas_width": img_w,
         "pixels": pixels,
-        "fits_hardware": content_w <= 96
+        "fits_hardware": content_w <= 96 or payload.scroll_enabled,
+        "scroll_enabled": payload.scroll_enabled,
+        "scroll_direction": payload.scroll_direction,
+        "scroll_speed": payload.scroll_speed
     }
 
 # Scheduling Endpoints

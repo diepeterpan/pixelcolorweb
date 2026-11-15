@@ -3,6 +3,9 @@ import logging
 from typing import Any, Dict, List, Optional
 from bleak import BleakScanner
 from pypixelcolor.client import AsyncClient
+from pypixelcolor.commands.send_image import _build_send_plan, _resize_image, _process_loaded_bytes
+from pypixelcolor.lib.constants import WRITE_UUID
+from pypixelcolor.lib.transport.send_plan import SendPlan, _chunk_bytes
 from .config_manager import config_manager
 from .script_runner import script_manager
 
@@ -14,6 +17,9 @@ class BLEWorker:
         self.connected: bool = False
         self.is_connecting: bool = False
         self.current_address: Optional[str] = None
+        self._last_scan_rssi: Dict[str, int] = {}
+        self._cached_adapter_info: Optional[Dict[str, str]] = None
+        self._send_lock: asyncio.Lock = asyncio.Lock()
         self.queue: asyncio.Queue = asyncio.Queue()
         self.worker_task: Optional[asyncio.Task] = None
         self.reconnect_task: Optional[asyncio.Task] = None
@@ -21,7 +27,16 @@ class BLEWorker:
             "connected": False,
             "address": None,
             "name": None,
-            "status_msg": "Initializing"
+            "status_msg": "Initializing",
+            "ble_info": {
+                "version": "BLE 4.2",
+                "phy_speed": "1.0 Mbps (LE 1M + DLE)",
+                "max_throughput": "~80-100 KB/s",
+                "rssi": None,
+                "signal_quality": "Offline",
+                "mcu_version": None,
+                "firmware_version": None
+            }
         }
 
     async def start(self):
@@ -64,10 +79,13 @@ class BLEWorker:
                 is_pixel = any(k in name.lower() for k in ["pixel", "led", "matrix", "bglight", "bk", "ble"]) \
                            or any("fa02" in u or "fa03" in u or "5a01" in u for u in uuids)
 
+                rssi_val = adv.rssi if adv.rssi is not None else 0
+                if addr:
+                    self._last_scan_rssi[addr.upper()] = rssi_val
                 found_devices.append({
                     "address": addr,
                     "name": name,
-                    "rssi": adv.rssi if adv.rssi is not None else 0,
+                    "rssi": rssi_val,
                     "recommended": is_pixel,
                     "service_uuids": adv.service_uuids or []
                 })
@@ -76,6 +94,48 @@ class BLEWorker:
 
         # Sort recommended first, then strongest RSSI signal
         return sorted(found_devices, key=lambda x: (not x["recommended"], -x["rssi"]))
+
+    async def _query_adapter_info(self) -> Dict[str, str]:
+        if self._cached_adapter_info:
+            return self._cached_adapter_info
+        try:
+            import dbus_fast.aio
+            from dbus_fast import Message, BusType
+            bus = await dbus_fast.aio.MessageBus(bus_type=BusType.SYSTEM).connect()
+            msg = Message(
+                destination='org.bluez',
+                path='/org/bluez/hci0',
+                interface='org.freedesktop.DBus.Properties',
+                member='GetAll',
+                signature='s',
+                body=['org.bluez.Adapter1']
+            )
+            reply = await bus.call(msg)
+            ver = reply.body[0].get('Version')
+            ver_val = ver.value if ver else 8
+            hci_map = {
+                6: ('BLE 4.0', '1.0 Mbps (LE 1M)', '~30-40 KB/s'),
+                7: ('BLE 4.1', '1.0 Mbps (LE 1M)', '~40-50 KB/s'),
+                8: ('BLE 4.2', '1.0 Mbps (LE 1M + DLE)', '~80-100 KB/s'),
+                9: ('BLE 5.0', '2.0 Mbps (LE 2M PHY)', '~150-180 KB/s'),
+                10: ('BLE 5.1', '2.0 Mbps (LE 2M PHY)', '~150-180 KB/s'),
+                11: ('BLE 5.2', '2.0 Mbps (LE 2M PHY)', '~150-180 KB/s'),
+                12: ('BLE 5.3', '2.0 Mbps (LE 2M PHY)', '~150-180 KB/s'),
+                13: ('BLE 5.4', '2.0 Mbps (LE 2M PHY)', '~150-180 KB/s')
+            }
+            b_ver, phy, max_tp = hci_map.get(ver_val, ('BLE 4.2', '1.0 Mbps (LE 1M + DLE)', '~80-100 KB/s'))
+            self._cached_adapter_info = {
+                "version": b_ver,
+                "phy_speed": phy,
+                "max_throughput": max_tp
+            }
+            return self._cached_adapter_info
+        except Exception:
+            return {
+                "version": "BLE 4.2",
+                "phy_speed": "1.0 Mbps (LE 1M + DLE)",
+                "max_throughput": "~80-100 KB/s"
+            }
 
     async def connect_device(self, address: str, name: Optional[str] = None) -> bool:
         if self.connected and self.current_address == address:
@@ -94,9 +154,10 @@ class BLEWorker:
                 except Exception:
                     pass
 
-            self.client = AsyncClient(address, write_with_response=False)
+            self.client = AsyncClient(address)
             # Guard with 8s timeout to avoid indefinite DBus freezes
-            device_info = await asyncio.wait_for(self.client.connect(), timeout=8.0)
+            await asyncio.wait_for(self.client.connect(), timeout=8.0)
+            device_info = self.client.get_device_info()
             
             # Check supported matrix resolution (Currently limited to 96x16)
             dev_w = getattr(device_info, "width", 96) if device_info else 96
@@ -121,11 +182,39 @@ class BLEWorker:
 
             self.connected = True
             self.current_address = address
+
+            # Prepare telemetry info
+            adapter_info = await self._query_adapter_info()
+            scan_rssi = self._last_scan_rssi.get(address.upper())
+            if scan_rssi:
+                if scan_rssi >= -60:
+                    sig_label = f"{scan_rssi} dBm (Excellent)"
+                elif scan_rssi >= -75:
+                    sig_label = f"{scan_rssi} dBm (Good)"
+                elif scan_rssi >= -85:
+                    sig_label = f"{scan_rssi} dBm (Fair)"
+                else:
+                    sig_label = f"{scan_rssi} dBm (Weak)"
+            else:
+                sig_label = "Connected (Active)"
+
+            mcu_v = getattr(device_info, "mcu_version", "1.0") if device_info else "1.0"
+            wifi_v = getattr(device_info, "wifi_version", "1.0") if device_info else "1.0"
+
             self.last_status = {
                 "connected": True,
                 "address": address,
                 "name": name or "PixelColor Display",
-                "status_msg": "Connected"
+                "status_msg": "Connected",
+                "ble_info": {
+                    "version": adapter_info["version"],
+                    "phy_speed": adapter_info["phy_speed"],
+                    "max_throughput": adapter_info["max_throughput"],
+                    "rssi": scan_rssi,
+                    "signal_quality": sig_label,
+                    "mcu_version": f"v{mcu_v} ({dev_w}x{dev_h})",
+                    "firmware_version": f"v{wifi_v}"
+                }
             }
             config_manager.update({
                 "device": {
@@ -225,29 +314,89 @@ class BLEWorker:
             logger.error(f"Error sending text to matrix: {e}")
             return False
 
+    async def _send_plan_fast(self, plan: SendPlan, ack_timeout: float = 3.0) -> bool:
+        """
+        Fast-path GATT transport for 96x16 frames:
+        Uses Write Without Response (response=False) with 1.5ms pacing between chunks
+        and waits for matrix hardware ACK (window_event & all_event on NOTIFY_UUID).
+        Falls back to response=True if response=False fails or times out.
+        """
+        if not self.client or not self.client._session:
+            return False
+
+        session = self.client._session
+        bleak_client = session._client
+        ack_mgr = session._ack_mgr
+
+        if not bleak_client or not ack_mgr:
+            return False
+
+        async def _execute_transport(use_unack: bool) -> bool:
+            for idx, win in enumerate(plan.windows):
+                ack_mgr.reset()
+                for chunk in _chunk_bytes(win.data, plan.chunk_size):
+                    await bleak_client.write_gatt_char(WRITE_UUID, chunk, response=not use_unack)
+                    if use_unack:
+                        await asyncio.sleep(0.0015)  # 1.5ms pacing to avoid BLE RX buffer overrun
+                if plan.ack_policy.ack_per_window and win.requires_ack:
+                    await asyncio.wait_for(ack_mgr.window_event.wait(), timeout=ack_timeout)
+
+            if plan.ack_policy.ack_final:
+                await asyncio.wait_for(ack_mgr.all_event.wait(), timeout=ack_timeout)
+
+            return True
+
+        # Try fast path (response=False)
+        try:
+            return await _execute_transport(use_unack=True)
+        except Exception as e:
+            logger.warning(f"Fast-path write (response=False) failed ({e}), falling back to response=True...")
+
+        # Fallback to standard write request (response=True)
+        try:
+            return await _execute_transport(use_unack=False)
+        except Exception as err:
+            logger.error(f"Fallback transport also failed: {err}")
+            return False
+
     async def send_image(self, file_path: str):
         if not self.connected or not self.client:
             logger.warning("Cannot send image: Not connected to BLE device.")
             return False
-        try:
-            await self.client.send_image(path=file_path)
-            return True
-        except Exception as e:
-            logger.error(f"Error sending image to matrix: {e}")
-            return False
+        async with self._send_lock:
+            try:
+                from pathlib import Path
+                p = Path(file_path)
+                if not p.exists() or not p.is_file():
+                    logger.error(f"Image file not found: {file_path}")
+                    return False
+                with open(p, "rb") as f:
+                    file_bytes = f.read()
+                file_bytes, is_gif = _process_loaded_bytes(file_bytes, p.suffix.lower())
+                dev_info = self.client.get_device_info()
+                target_w = getattr(dev_info, "width", 96) if dev_info else 96
+                target_h = getattr(dev_info, "height", 16) if dev_info else 16
+                processed_bytes = _resize_image(file_bytes, is_gif, target_w, target_h)
+                plan = _build_send_plan(processed_bytes, is_gif, plan_name="send_image_fast")
+                return await self._send_plan_fast(plan)
+            except Exception as e:
+                logger.error(f"Error sending image to matrix: {e}")
+                return False
 
     async def send_image_bytes(self, image_bytes: bytes, file_ext: str = ".png"):
-        """Send image directly from in-memory bytes without writing to disk."""
+        """Send image directly from in-memory bytes using fast-path SendPlan and concurrency lock."""
         if not self.connected or not self.client:
             logger.warning("Cannot send image bytes: Not connected to BLE device.")
             return False
-        try:
-            hex_data = image_bytes.hex()
-            await self.client.send_image_hex(hex_string=hex_data, file_extension=file_ext)
-            return True
-        except Exception as e:
-            logger.error(f"Error sending image bytes to matrix: {e}")
-            return False
+        async with self._send_lock:
+            try:
+                is_gif = file_ext.lower() == ".gif"
+                # If image is already a 96x16 PNG frame (standard PixelWeb rendered frame), build SendPlan directly
+                plan = _build_send_plan(image_bytes, is_gif, plan_name="send_image_bytes_fast")
+                return await self._send_plan_fast(plan)
+            except Exception as e:
+                logger.error(f"Error sending image bytes to matrix: {e}")
+                return False
 
     async def set_brightness(self, level: int):
         if self.connected and self.client:

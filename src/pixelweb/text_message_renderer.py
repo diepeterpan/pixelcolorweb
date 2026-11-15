@@ -111,16 +111,18 @@ def render_text_message(
     bg_color: str = "#000000",
     alignment: str = "center",  # "left", "center", "right"
     antialias: bool = False,
-    v_alignment: str = "middle"  # "top", "middle", "bottom"
+    v_alignment: str = "middle",  # "top", "middle", "bottom"
+    full_width: bool = False
 ) -> Tuple[Image.Image, int]:
     """
-    Renders text, emojis, and inline <image.png> tags into a pixel-perfect image sized (width, height).
+    Renders text, emojis, and inline <image.png> tags into an image.
+    If full_width is True, the canvas width will accommodate the entire content (at least width).
     """
     font = get_font_instance(font_id, font_size)
     runs = split_into_runs(text)
 
     # First pass: Measure total width of all runs
-    dummy_img = Image.new("RGBA", (width * 4, height), (0, 0, 0, 0))
+    dummy_img = Image.new("RGBA", (width * 8, height), (0, 0, 0, 0))
     dummy_draw = ImageDraw.Draw(dummy_img)
     dummy_draw.fontmode = "L" if antialias else "1"
 
@@ -170,8 +172,10 @@ def render_text_message(
             measured_runs.append(("text", run_val, run_w, None))
             total_content_width += run_w
 
+    actual_canvas_w = max(width, total_content_width) if full_width else width
+
     # Second pass: Starting X position
-    if alignment == "left":
+    if full_width or alignment == "left":
         start_x = 0
     elif alignment == "right":
         start_x = max(0, width - total_content_width)
@@ -179,7 +183,7 @@ def render_text_message(
         start_x = max(0, (width - total_content_width) // 2)
 
     # Canvas creation
-    canvas = Image.new("RGBA", (width, height), bg_color)
+    canvas = Image.new("RGBA", (actual_canvas_w, height), bg_color)
     draw = ImageDraw.Draw(canvas)
     draw.fontmode = "L" if antialias else "1"
 

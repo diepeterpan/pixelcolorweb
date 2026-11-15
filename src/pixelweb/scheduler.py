@@ -3,7 +3,7 @@ import io
 import hashlib
 import logging
 from datetime import datetime, time
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 from PIL import Image
 from .config_manager import config_manager
 from .script_runner import script_manager
@@ -16,11 +16,155 @@ class SchedulerService:
     def __init__(self):
         self.running: bool = False
         self.task: Optional[asyncio.Task] = None
+        self._scroll_task: Optional[asyncio.Task] = None
+        self._scroll_active_key: Optional[str] = None
+        self._sync_listeners: Set[Callable[[Dict[str, Any]], Any]] = set()
+        self.scroll_metrics: Dict[str, Any] = {
+            "active": False,
+            "target_speed_ms": 80,
+            "actual_ble_ms": 0,
+            "pixel_shift": 1,
+            "direction": "rtl"
+        }
+
+    def register_sync_listener(self, callback: Callable[[Dict[str, Any]], Any]):
+        self._sync_listeners.add(callback)
+
+    def unregister_sync_listener(self, callback: Callable[[Dict[str, Any]], Any]):
+        self._sync_listeners.discard(callback)
+
+    def broadcast_sync(self, event_data: Dict[str, Any]):
+        for cb in list(self._sync_listeners):
+            try:
+                cb(event_data)
+            except Exception as e:
+                logger.error(f"Error notifying sync listener: {e}")
 
     async def start(self):
         self.running = True
         self.task = asyncio.create_task(self._schedule_loop())
-        logger.info("Schedule background service running.")
+        self._scroll_task = asyncio.create_task(self._text_scroll_loop())
+        logger.info("Schedule background and text scroll services running.")
+
+    async def _text_scroll_loop(self):
+        """
+        Dedicated software-based image scroller for active text_message with scroll_enabled.
+        Streams cropped 96x16 frames to BLE at user-defined interval, adjusting / skipping
+        vertical pixel columns to keep up if rendering or BLE transfer takes too long.
+        """
+        rendered_key = None
+        pre_rendered_frames: List[bytes] = []
+        canvas_w = 96
+        offset_x = 0
+        last_step_time = asyncio.get_event_loop().time()
+
+        while self.running:
+            try:
+                cfg = config_manager.get()
+                mode = cfg.get("mode")
+                msg_cfg = cfg.get("active_text_message") if mode == "text_message" else None
+
+                if not ble_worker.connected or not msg_cfg or not msg_cfg.get("scroll_enabled"):
+                    self.scroll_metrics["active"] = False
+                    rendered_key = None
+                    pre_rendered_frames = []
+                    await asyncio.sleep(0.2)
+                    continue
+
+                # Generate a unique hash key for current text config to know if content changed
+                curr_key = f"{msg_cfg.get('text')}_{msg_cfg.get('font_id')}_{msg_cfg.get('font_size')}_{msg_cfg.get('text_color')}_{msg_cfg.get('bg_color')}_{msg_cfg.get('v_alignment')}_{msg_cfg.get('antialias')}_{msg_cfg.get('scroll_direction')}_{msg_cfg.get('scroll_speed')}"
+                if curr_key != rendered_key:
+                    rendered_key = curr_key
+                    # Render full width canvas with blank spacing between loops (Option A)
+                    base_img, content_w = render_text_message(
+                        text=msg_cfg.get("text", ""),
+                        width=96,
+                        height=16,
+                        font_id=msg_cfg.get("font_id", "PressStart2P"),
+                        font_size=msg_cfg.get("font_size", 8),
+                        text_color=msg_cfg.get("text_color", "#FFFFFF"),
+                        bg_color=msg_cfg.get("bg_color", "#000000"),
+                        alignment="left",
+                        antialias=msg_cfg.get("antialias", False),
+                        v_alignment=msg_cfg.get("v_alignment", "middle"),
+                        full_width=True
+                    )
+                    # For continuous loop wrap (Option A), add spacer of 24px and repeat
+                    spacer_w = 24
+                    loop_unit_w = max(96, content_w) + spacer_w
+                    bg_col = msg_cfg.get("bg_color", "#000000")
+                    full_w = loop_unit_w * 2 + 96
+                    full_canvas = Image.new("RGB", (full_w, 16), bg_col)
+                    full_canvas.paste(base_img.convert("RGB"), (0, 0))
+                    full_canvas.paste(base_img.convert("RGB"), (loop_unit_w, 0))
+                    full_canvas.paste(base_img.convert("RGB"), (loop_unit_w * 2, 0))
+                    canvas_w = loop_unit_w
+
+                    # Pre-render each 96x16 window as Truecolor RGB PNG (hardware standard)
+                    pre_rendered_frames = []
+                    for x in range(canvas_w):
+                        slice_img = full_canvas.crop((x, 0, x + 96, 16)).convert("RGB")
+                        buf = io.BytesIO()
+                        slice_img.save(buf, format="PNG", optimize=True, compress_level=9)
+                        pre_rendered_frames.append(buf.getvalue())
+
+                    direction = msg_cfg.get("scroll_direction", "rtl")
+                    offset_x = 0 if direction == "rtl" else (canvas_w - 1)
+                    last_step_time = asyncio.get_event_loop().time()
+
+                if not pre_rendered_frames:
+                    await asyncio.sleep(0.05)
+                    continue
+
+                speed_ms = max(80, int(msg_cfg.get("scroll_speed", 80)))
+                direction = msg_cfg.get("scroll_direction", "rtl")
+
+                step_start = asyncio.get_event_loop().time()
+
+                # Instant slice lookup from ring buffer (0 ms latency)
+                cur_x = int(round(offset_x)) % len(pre_rendered_frames)
+                frame_bytes = pre_rendered_frames[cur_x]
+
+                # Send frame over BLE via fast-path binary transport
+                await ble_worker.send_image_bytes(frame_bytes, file_ext=".png")
+
+                step_duration_ms = (asyncio.get_event_loop().time() - step_start) * 1000.0
+
+                # Adaptive skip: advance pixels based on time spent
+                pixels_to_advance = max(1, int(round(max(speed_ms, step_duration_ms) / speed_ms)))
+
+                # Update live scrolling telemetry
+                sync_payload = {
+                    "type": "frame_sync",
+                    "offset": cur_x,
+                    "target_speed_ms": speed_ms,
+                    "actual_ble_ms": int(round(step_duration_ms)),
+                    "pixel_shift": pixels_to_advance,
+                    "direction": direction,
+                    "total_frames": len(pre_rendered_frames)
+                }
+                self.scroll_metrics.update({
+                    "active": True,
+                    "target_speed_ms": speed_ms,
+                    "actual_ble_ms": int(round(step_duration_ms)),
+                    "pixel_shift": pixels_to_advance,
+                    "direction": direction
+                })
+                self.broadcast_sync(sync_payload)
+
+                if direction == "rtl":
+                    offset_x = (offset_x + pixels_to_advance) % len(pre_rendered_frames)
+                else:
+                    offset_x = (offset_x - pixels_to_advance) % len(pre_rendered_frames)
+
+                remaining_sleep_ms = max(5, speed_ms - step_duration_ms)
+                await asyncio.sleep(remaining_sleep_ms / 1000.0)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in text scroll loop: {e}")
+                await asyncio.sleep(0.5)
 
     async def _schedule_loop(self):
         last_slot_id = None
@@ -32,10 +176,10 @@ class SchedulerService:
                 sched_cfg = cfg.get("schedule", {})
                 mode = cfg.get("mode")
 
-                # Dynamic text_message refresh loop (when refresh_interval > 0)
+                # Dynamic text_message refresh loop (when refresh_interval > 0 and not scrolling)
                 if mode == "text_message" and ble_worker.connected:
                     msg_cfg = cfg.get("active_text_message")
-                    if msg_cfg:
+                    if msg_cfg and not msg_cfg.get("scroll_enabled"):
                         interval = int(msg_cfg.get("refresh_interval", 0))
                         now_ts = asyncio.get_event_loop().time()
                         if interval > 0 and (now_ts - last_refresh_tick >= interval):
@@ -52,10 +196,10 @@ class SchedulerService:
                                 antialias=msg_cfg.get("antialias", False),
                                 v_alignment=msg_cfg.get("v_alignment", "middle")
                             )
-                            # Convert to adaptive palette PNG for minimum payload size
-                            pal_img = img.convert('P', palette=Image.Palette.ADAPTIVE, colors=256)
+                            # Convert to 24-bit RGB PNG with maximum compression
+                            rgb_img = img.convert("RGB")
                             buf = io.BytesIO()
-                            pal_img.save(buf, format="PNG", optimize=True)
+                            rgb_img.save(buf, format="PNG", optimize=True, compress_level=9)
                             frame_bytes = buf.getvalue()
 
                             # Compute hash to avoid re-transmitting identical frame
@@ -134,28 +278,29 @@ class SchedulerService:
             saved_cfg = get_text_message_config(config_id) if config_id else None
 
             if saved_cfg:
-                img, _ = render_text_message(
-                    text=saved_cfg.get("text", ""),
-                    width=96,
-                    height=16,
-                    font_id=saved_cfg.get("font_id", "PressStart2P"),
-                    font_size=saved_cfg.get("font_size", 8),
-                    text_color=saved_cfg.get("text_color", "#FFFFFF"),
-                    bg_color=saved_cfg.get("bg_color", "#000000"),
-                    alignment=saved_cfg.get("alignment", "center"),
-                    antialias=saved_cfg.get("antialias", False),
-                    v_alignment=saved_cfg.get("v_alignment", "middle")
-                )
-                pal_img = img.convert('P', palette=Image.Palette.ADAPTIVE, colors=256)
-                buf = io.BytesIO()
-                pal_img.save(buf, format="PNG", optimize=True)
-                await ble_worker.send_image_bytes(buf.getvalue(), file_ext=".png")
-
-                # Set active_text_message so any dynamic interval continues during this slot
+                # Set active_text_message so any dynamic interval or scrolling activates immediately
                 config_manager.update({
                     "mode": "text_message",
                     "active_text_message": saved_cfg
                 })
+
+                if not saved_cfg.get("scroll_enabled"):
+                    img, _ = render_text_message(
+                        text=saved_cfg.get("text", ""),
+                        width=96,
+                        height=16,
+                        font_id=saved_cfg.get("font_id", "PressStart2P"),
+                        font_size=saved_cfg.get("font_size", 8),
+                        text_color=saved_cfg.get("text_color", "#FFFFFF"),
+                        bg_color=saved_cfg.get("bg_color", "#000000"),
+                        alignment=saved_cfg.get("alignment", "center"),
+                        antialias=saved_cfg.get("antialias", False),
+                        v_alignment=saved_cfg.get("v_alignment", "middle")
+                    )
+                    rgb_img = img.convert("RGB")
+                    buf = io.BytesIO()
+                    rgb_img.save(buf, format="PNG", optimize=True, compress_level=9)
+                    await ble_worker.send_image_bytes(buf.getvalue(), file_ext=".png")
             else:
                 raw_text = slot.get("content", "SCHEDULED TEXT")
                 await ble_worker.send_text(

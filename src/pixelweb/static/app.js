@@ -7,7 +7,15 @@ const state = {
   bleStatus: { connected: false, address: null, name: null, status_msg: "Disconnected" },
   activeTab: "tab-dashboard",
   previewMode: "bitmap", // "bitmap" or "text"
-  previewBitmap: null,    // 16 rows x 96 cols [r,g,b]
+  previewBitmap: null,    // 16 rows x N cols [r,g,b]
+  scrolling: {
+    enabled: false,
+    direction: "rtl",
+    speed: 80,
+    offset: 0,
+    lastTick: 0,
+    hardwareSynced: false
+  },
   preview: {
     width: 96,
     height: 16,
@@ -43,9 +51,51 @@ function drawMatrixPreview() {
 
   // If in bitmap mode and we have preview pixels from Text Message / Image
   if (state.previewMode === "bitmap" && state.previewBitmap && state.previewBitmap.length === rows) {
+    const fullCols = state.previewBitmap[0] ? state.previewBitmap[0].length : cols;
+    let startCol = 0;
+
+    if (state.scrolling.enabled && fullCols > 0) {
+      if (!state.scrolling.hardwareSynced) {
+        // Fallback local animation if hardware WebSocket sync is not streaming
+        const now = performance.now();
+        const speed = Math.max(80, state.scrolling.speed || 80);
+        if (!state.scrolling.lastTick) state.scrolling.lastTick = now;
+        const elapsed = now - state.scrolling.lastTick;
+
+        if (elapsed >= speed) {
+          const spacer = 24;
+          const loopUnit = Math.max(cols, fullCols) + spacer;
+          const stepsToAdvance = Math.max(1, Math.round(elapsed / speed));
+          state.scrolling.lastTick = now;
+
+          if (state.scrolling.direction === "rtl") {
+            state.scrolling.offset = (state.scrolling.offset + stepsToAdvance) % loopUnit;
+          } else {
+            state.scrolling.offset = (state.scrolling.offset - stepsToAdvance + loopUnit) % loopUnit;
+          }
+        }
+      }
+      startCol = Math.floor(state.scrolling.offset);
+    }
+
+    const spacer = 24;
+    const loopUnit = Math.max(cols, fullCols) + spacer;
+
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        const rgb = state.previewBitmap[r][c];
+        let rgb = [0, 0, 0];
+        if (state.scrolling.enabled) {
+          const sampleX = (startCol + c) % loopUnit;
+          if (sampleX < fullCols) {
+            rgb = state.previewBitmap[r][sampleX] || [0, 0, 0];
+          } else {
+            // In the 24px spacer region between loops, use background color (first pixel color or black)
+            rgb = state.previewBitmap[r][0] || [0, 0, 0];
+          }
+        } else {
+          rgb = state.previewBitmap[r][c] || [0, 0, 0];
+        }
+
         const isLit = rgb && (rgb[0] > 10 || rgb[1] > 10 || rgb[2] > 10);
         const x = c * step + 1;
         const y = r * step + 1;
@@ -200,6 +250,14 @@ async function fetchConfig() {
       if (dashSched) dashSched.textContent = data.schedule.enabled ? "Active" : "Disabled";
       renderScheduleTable(data.schedule.slots || []);
     }
+    if (data.active_text_message) {
+      const atm = data.active_text_message;
+      if (atm.scroll_enabled) {
+        state.scrolling.enabled = true;
+        state.scrolling.direction = atm.scroll_direction || "rtl";
+        state.scrolling.speed = Math.max(80, atm.scroll_speed || 80);
+      }
+    }
   } catch (err) {
     console.error("Error fetching config:", err);
   }
@@ -228,6 +286,57 @@ async function fetchStatus() {
       dashName.textContent = data.address ? (data.name || "Configured (Offline)") : "No Device Paired";
       dashMac.textContent = data.address ? `Address: ${data.address}` : "Address: --:--:--:--:--:--";
       if (btnRetry && data.address) btnRetry.classList.remove("hidden");
+    }
+
+    // Update Dashboard BLE Telemetry Tile
+    const bleVersionEl = document.getElementById("dash-ble-version");
+    const bleThroughputEl = document.getElementById("dash-ble-throughput");
+    const bleSignalEl = document.getElementById("dash-ble-signal");
+    const bleFirmwareEl = document.getElementById("dash-ble-firmware");
+
+    if (data.ble_info) {
+      const b = data.ble_info;
+      if (bleVersionEl) bleVersionEl.textContent = b.version || "BLE 4.2";
+      if (bleThroughputEl) bleThroughputEl.textContent = b.max_throughput || "~80-100 KB/s";
+      if (bleSignalEl) {
+        bleSignalEl.textContent = b.signal_quality || "Unknown";
+        if (b.rssi && b.rssi < -80) {
+          bleSignalEl.className = "font-mono font-semibold text-amber-600";
+        } else {
+          bleSignalEl.className = "font-mono font-semibold text-emerald-600";
+        }
+      }
+      if (bleFirmwareEl) bleFirmwareEl.textContent = b.mcu_version || "v1.0 (96x16)";
+    } else if (!data.connected) {
+      if (bleSignalEl) {
+        bleSignalEl.textContent = "Offline";
+        bleSignalEl.className = "font-mono text-slate-400";
+      }
+    }
+
+    // Update Live Simulator Scroll Metrics Pill
+    const metricsPill = document.getElementById("sim-scroll-metrics");
+    if (metricsPill) {
+      const sm = data.scroll_metrics;
+      if (sm && sm.active) {
+        metricsPill.classList.remove("hidden");
+        const targetSpeed = document.getElementById("sim-target-speed");
+        const pixelShift = document.getElementById("sim-pixel-shift");
+        const actualBle = document.getElementById("sim-actual-ble");
+
+        if (targetSpeed) targetSpeed.textContent = `${sm.target_speed_ms}ms`;
+        if (pixelShift) pixelShift.textContent = `${sm.pixel_shift}px`;
+        if (actualBle) {
+          actualBle.textContent = `${sm.actual_ble_ms}ms`;
+          if (sm.actual_ble_ms > sm.target_speed_ms * 1.5) {
+            actualBle.className = "font-mono text-amber-600 font-bold";
+          } else {
+            actualBle.className = "font-mono text-emerald-700 font-bold";
+          }
+        }
+      } else if (!state.scrolling.enabled) {
+        metricsPill.classList.add("hidden");
+      }
     }
   } catch (err) {
     console.error("Error fetching status:", err);
@@ -2152,10 +2261,19 @@ function setupTextMessageStudio() {
   const refreshValSpan = document.getElementById("msg-refresh-val");
   const emojiSearch = document.getElementById("emoji-search-input");
 
+  // Horizontal Scrolling Controls
+  const scrollEnabledCheckbox = document.getElementById("msg-scroll-enabled");
+  const scrollSpeedInput = document.getElementById("msg-scroll-speed");
+  const btnScrollRtl = document.getElementById("btn-scroll-rtl");
+  const btnScrollLtr = document.getElementById("btn-scroll-ltr");
+
   let currentAlignment = "center";
   let currentVAlignment = "middle";
+  let currentScrollDirection = "rtl";
   let currentCategory = "christmas";
   let livePreviewTimer = null;
+  let bottomPreviewCanvas = null;
+  let bottomPreviewAnimFrame = null;
 
   if (refreshIntervalInput) {
     refreshIntervalInput.addEventListener("input", (e) => {
@@ -2300,6 +2418,38 @@ function setupTextMessageStudio() {
     });
   });
 
+  // Scroll direction toggles
+  if (btnScrollRtl && btnScrollLtr) {
+    btnScrollRtl.addEventListener("click", () => {
+      currentScrollDirection = "rtl";
+      btnScrollRtl.className = "btn-scroll-dir btn-3d bg-pink-100 text-pink-700 border-pink-300 font-semibold text-xs py-0.5 px-2 text-center";
+      btnScrollLtr.className = "btn-scroll-dir btn-3d bg-white text-slate-700 border-slate-200 text-xs py-0.5 px-2 text-center";
+      state.scrolling.direction = "rtl";
+      triggerPreview();
+    });
+    btnScrollLtr.addEventListener("click", () => {
+      currentScrollDirection = "ltr";
+      btnScrollLtr.className = "btn-scroll-dir btn-3d bg-pink-100 text-pink-700 border-pink-300 font-semibold text-xs py-0.5 px-2 text-center";
+      btnScrollRtl.className = "btn-scroll-dir btn-3d bg-white text-slate-700 border-slate-200 text-xs py-0.5 px-2 text-center";
+      state.scrolling.direction = "ltr";
+      triggerPreview();
+    });
+  }
+
+  if (scrollEnabledCheckbox) {
+    scrollEnabledCheckbox.addEventListener("change", () => {
+      state.scrolling.enabled = scrollEnabledCheckbox.checked;
+      triggerPreview();
+    });
+  }
+
+  if (scrollSpeedInput) {
+    scrollSpeedInput.addEventListener("input", () => {
+      const spd = Math.max(80, parseInt(scrollSpeedInput.value, 10) || 80);
+      state.scrolling.speed = spd;
+    });
+  }
+
   // Vertical alignment buttons
   document.querySelectorAll(".btn-valign").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -2319,7 +2469,61 @@ function setupTextMessageStudio() {
     previewTimeout = setTimeout(fetchRenderedPreview, 120);
   }
 
+  // Animate bottom-right preview when scrolling is active
+  let bottomPreviewOffset = 0;
+  let bottomPreviewLastTime = 0;
+  let bottomFullImg = null;
+
+  function runBottomPreviewLoop() {
+    if (bottomPreviewAnimFrame) cancelAnimationFrame(bottomPreviewAnimFrame);
+
+    function stepPreview(time) {
+      if (!state.scrolling.enabled || !bottomFullImg) {
+        return;
+      }
+      const speed = Math.max(80, state.scrolling.speed || 80);
+      if (!bottomPreviewLastTime) bottomPreviewLastTime = time;
+      const elapsed = time - bottomPreviewLastTime;
+
+      if (elapsed >= speed) {
+        const spacer = 24;
+        const loopUnit = Math.max(96, bottomFullImg.width) + spacer;
+        const steps = Math.max(1, Math.round(elapsed / speed));
+        bottomPreviewLastTime = time;
+
+        if (state.scrolling.direction === "rtl") {
+          bottomPreviewOffset = (bottomPreviewOffset + steps) % loopUnit;
+        } else {
+          bottomPreviewOffset = (bottomPreviewOffset - steps + loopUnit) % loopUnit;
+        }
+
+        // Draw slice onto hidden 96x16 canvas and set previewImg.src
+        if (!bottomPreviewCanvas) {
+          bottomPreviewCanvas = document.createElement("canvas");
+          bottomPreviewCanvas.width = 96;
+          bottomPreviewCanvas.height = 16;
+        }
+        const bCtx = bottomPreviewCanvas.getContext("2d");
+        bCtx.fillStyle = bgColorInput.value || "#000000";
+        bCtx.fillRect(0, 0, 96, 16);
+
+        const curX = Math.floor(bottomPreviewOffset);
+        // Draw primary instance
+        bCtx.drawImage(bottomFullImg, -curX, 0);
+        // Draw secondary instance for continuous wrap
+        bCtx.drawImage(bottomFullImg, loopUnit - curX, 0);
+
+        previewImg.src = bottomPreviewCanvas.toDataURL("image/png");
+      }
+      bottomPreviewAnimFrame = requestAnimationFrame(stepPreview);
+    }
+    bottomPreviewAnimFrame = requestAnimationFrame(stepPreview);
+  }
+
   async function fetchRenderedPreview() {
+    const isScrolling = scrollEnabledCheckbox ? scrollEnabledCheckbox.checked : false;
+    const scrollSpd = scrollSpeedInput ? Math.max(80, parseInt(scrollSpeedInput.value, 10) || 80) : 80;
+
     const payload = {
       name: configNameInput.value.trim() || "untitled",
       text: textInput.value || " ",
@@ -2329,7 +2533,10 @@ function setupTextMessageStudio() {
       bg_color: bgColorInput.value,
       alignment: currentAlignment,
       v_alignment: currentVAlignment,
-      antialias: antialiasCheckbox.checked
+      antialias: antialiasCheckbox.checked,
+      scroll_enabled: isScrolling,
+      scroll_direction: currentScrollDirection,
+      scroll_speed: scrollSpd
     };
 
     try {
@@ -2340,8 +2547,12 @@ function setupTextMessageStudio() {
       });
       const data = await res.json();
       if (data.success) {
-        previewImg.src = data.preview_url;
         widthBadge.textContent = `Width: ${data.content_width} / 96 px`;
+
+        // Sync to state
+        state.scrolling.enabled = isScrolling;
+        state.scrolling.direction = currentScrollDirection;
+        state.scrolling.speed = scrollSpd;
 
         // Sync to top hardware simulator
         state.previewMode = "bitmap";
@@ -2351,14 +2562,29 @@ function setupTextMessageStudio() {
         const renderInfo = document.getElementById("preview-render-info");
         if (renderInfo) renderInfo.textContent = "";
 
-        if (data.fits_hardware) {
+        if (isScrolling) {
           widthBadge.className = "rainbow-badge text-[10px]";
-          fitWarning.className = "text-[11px] text-emerald-600 mt-1 font-semibold";
-          fitWarning.textContent = `✓ Fits hardware bounds (${data.content_width}px / 96px)`;
+          fitWarning.className = "text-[11px] text-pink-600 mt-1 font-semibold";
+          fitWarning.textContent = `⇄ Scrolling Active (${data.content_width}px message loops seamlessly)`;
+
+          // Setup bottom preview animation
+          bottomFullImg = new Image();
+          bottomFullImg.onload = () => {
+            runBottomPreviewLoop();
+          };
+          bottomFullImg.src = data.preview_url;
         } else {
-          widthBadge.className = "bg-red-500 text-white font-bold px-2 py-0.5 rounded text-[10px]";
-          fitWarning.className = "text-[11px] text-red-500 mt-1 font-semibold";
-          fitWarning.textContent = `⚠ Overflow by ${data.content_width - 96}px! Text will clip in static mode.`;
+          if (bottomPreviewAnimFrame) cancelAnimationFrame(bottomPreviewAnimFrame);
+          previewImg.src = data.preview_url;
+          if (data.fits_hardware) {
+            widthBadge.className = "rainbow-badge text-[10px]";
+            fitWarning.className = "text-[11px] text-emerald-600 mt-1 font-semibold";
+            fitWarning.textContent = `✓ Fits hardware bounds (${data.content_width}px / 96px)`;
+          } else {
+            widthBadge.className = "bg-red-500 text-white font-bold px-2 py-0.5 rounded text-[10px]";
+            fitWarning.className = "text-[11px] text-red-500 mt-1 font-semibold";
+            fitWarning.textContent = `⚠ Overflow by ${data.content_width - 96}px! Text will clip in static mode.`;
+          }
         }
       }
     } catch (e) {
@@ -2381,6 +2607,9 @@ function setupTextMessageStudio() {
     lucide.createIcons();
 
     const intervalVal = refreshIntervalInput ? (parseInt(refreshIntervalInput.value, 10) || 0) : 0;
+    const isScrolling = scrollEnabledCheckbox ? scrollEnabledCheckbox.checked : false;
+    const scrollSpd = scrollSpeedInput ? Math.max(80, parseInt(scrollSpeedInput.value, 10) || 80) : 80;
+
     const payload = {
       name: configNameInput.value.trim() || "untitled",
       text: textInput.value || " ",
@@ -2391,7 +2620,10 @@ function setupTextMessageStudio() {
       alignment: currentAlignment,
       v_alignment: currentVAlignment,
       antialias: antialiasCheckbox.checked,
-      refresh_interval: intervalVal
+      refresh_interval: intervalVal,
+      scroll_enabled: isScrolling,
+      scroll_direction: currentScrollDirection,
+      scroll_speed: scrollSpd
     };
 
     try {
@@ -2405,10 +2637,15 @@ function setupTextMessageStudio() {
         // Sync simulator directly
         state.previewMode = "bitmap";
         state.previewBitmap = data.pixels;
+        state.scrolling.enabled = isScrolling;
+        state.scrolling.direction = currentScrollDirection;
+        state.scrolling.speed = scrollSpd;
+
+        const scrollInfo = isScrolling ? ` (scrolling ${currentScrollDirection.toUpperCase()} @ ${scrollSpd}ms)` : "";
         const msgInfo = intervalVal > 0 ? ` (auto-refreshing every ${intervalVal}s)` : "";
-        alert(`Image rendered and dispatched to matrix display!${msgInfo}`);
+        alert(`Image rendered and dispatched to matrix display!${scrollInfo}${msgInfo}`);
         document.getElementById("dash-active-summary").textContent = payload.text;
-        document.getElementById("dash-active-detail").textContent = `Rendered Image (${payload.font_id})${msgInfo}`;
+        document.getElementById("dash-active-detail").textContent = `Rendered Image (${payload.font_id})${scrollInfo}${msgInfo}`;
       } else {
         alert("Matrix communication failed or display is disconnected.");
       }
@@ -2429,6 +2666,9 @@ function setupTextMessageStudio() {
       return;
     }
     const intervalVal = refreshIntervalInput ? (parseInt(refreshIntervalInput.value, 10) || 0) : 0;
+    const isScrolling = scrollEnabledCheckbox ? scrollEnabledCheckbox.checked : false;
+    const scrollSpd = scrollSpeedInput ? Math.max(80, parseInt(scrollSpeedInput.value, 10) || 80) : 80;
+
     const payload = {
       name: name,
       id: name.toLowerCase().replace(/[^a-z0-9_-]/g, "_"),
@@ -2440,7 +2680,10 @@ function setupTextMessageStudio() {
       alignment: currentAlignment,
       v_alignment: currentVAlignment,
       antialias: antialiasCheckbox.checked,
-      refresh_interval: intervalVal
+      refresh_interval: intervalVal,
+      scroll_enabled: isScrolling,
+      scroll_direction: currentScrollDirection,
+      scroll_speed: scrollSpd
     };
 
     const res = await fetch("/api/text-message/save", {
@@ -2515,6 +2758,28 @@ function setupTextMessageStudio() {
           }
         });
 
+        // Load scrolling parameters
+        if (scrollEnabledCheckbox) {
+          scrollEnabledCheckbox.checked = !!c.scroll_enabled;
+          state.scrolling.enabled = !!c.scroll_enabled;
+        }
+        if (scrollSpeedInput) {
+          const spd = Math.max(80, c.scroll_speed || 80);
+          scrollSpeedInput.value = spd;
+          state.scrolling.speed = spd;
+        }
+        currentScrollDirection = c.scroll_direction === "ltr" ? "ltr" : "rtl";
+        state.scrolling.direction = currentScrollDirection;
+        if (btnScrollRtl && btnScrollLtr) {
+          if (currentScrollDirection === "ltr") {
+            btnScrollLtr.className = "btn-scroll-dir btn-3d bg-pink-100 text-pink-700 border-pink-300 font-semibold text-xs py-0.5 px-2 text-center";
+            btnScrollRtl.className = "btn-scroll-dir btn-3d bg-white text-slate-700 border-slate-200 text-xs py-0.5 px-2 text-center";
+          } else {
+            btnScrollRtl.className = "btn-scroll-dir btn-3d bg-pink-100 text-pink-700 border-pink-300 font-semibold text-xs py-0.5 px-2 text-center";
+            btnScrollLtr.className = "btn-scroll-dir btn-3d bg-white text-slate-700 border-slate-200 text-xs py-0.5 px-2 text-center";
+          }
+        }
+
         triggerPreview();
       }
     } catch (e) {
@@ -2583,6 +2848,89 @@ function setupSettingsControls() {
   });
 }
 
+// WebSocket Hardware Matrix Sync Client
+let matrixSyncSocket = null;
+let lastSyncEventTime = 0;
+
+function connectMatrixSyncWebSocket() {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = `${protocol}//${window.location.host}/ws/matrix-sync`;
+
+  try {
+    matrixSyncSocket = new WebSocket(wsUrl);
+
+    matrixSyncSocket.onopen = () => {
+      // Periodic ping keepalive every 20s
+      if (!matrixSyncSocket._pingInterval) {
+        matrixSyncSocket._pingInterval = setInterval(() => {
+          if (matrixSyncSocket && matrixSyncSocket.readyState === WebSocket.OPEN) {
+            matrixSyncSocket.send("ping");
+          }
+        }, 20000);
+      }
+    };
+
+    matrixSyncSocket.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "frame_sync") {
+          lastSyncEventTime = performance.now();
+          state.scrolling.hardwareSynced = true;
+
+          // Direct alignment: offset lockstep with physical matrix frame ACK
+          state.scrolling.offset = msg.offset;
+
+          // Update metrics badge in simulator header in exact real-time
+          const metricsPill = document.getElementById("sim-scroll-metrics");
+          if (metricsPill) {
+            metricsPill.classList.remove("hidden");
+            const targetSpeed = document.getElementById("sim-target-speed");
+            const pixelShift = document.getElementById("sim-pixel-shift");
+            const actualBle = document.getElementById("sim-actual-ble");
+
+            if (targetSpeed) targetSpeed.textContent = `${msg.target_speed_ms}ms`;
+            if (pixelShift) pixelShift.textContent = `${msg.pixel_shift}px`;
+            if (actualBle) {
+              actualBle.textContent = `${msg.actual_ble_ms}ms`;
+              if (msg.actual_ble_ms > msg.target_speed_ms * 1.5) {
+                actualBle.className = "font-mono text-amber-600 font-bold";
+              } else {
+                actualBle.className = "font-mono text-emerald-700 font-bold";
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Error processing matrix sync packet:", e);
+      }
+    };
+
+    matrixSyncSocket.onclose = () => {
+      state.scrolling.hardwareSynced = false;
+      if (matrixSyncSocket && matrixSyncSocket._pingInterval) {
+        clearInterval(matrixSyncSocket._pingInterval);
+        matrixSyncSocket._pingInterval = null;
+      }
+      // Reconnect after 3 seconds
+      setTimeout(connectMatrixSyncWebSocket, 3000);
+    };
+
+    matrixSyncSocket.onerror = () => {
+      state.scrolling.hardwareSynced = false;
+    };
+  } catch (err) {
+    state.scrolling.hardwareSynced = false;
+    setTimeout(connectMatrixSyncWebSocket, 5000);
+  }
+}
+
+// Fallback watchdog: if hardware sync packets pause for > 2 seconds while scrolling, return to local preview
+setInterval(() => {
+  if (state.scrolling.hardwareSynced && performance.now() - lastSyncEventTime > 2000) {
+    state.scrolling.hardwareSynced = false;
+  }
+}, 1000);
+
 // App Initialization
 window.addEventListener("DOMContentLoaded", () => {
   try { initCanvas(); } catch (e) { console.error("initCanvas error:", e); }
@@ -2595,6 +2943,7 @@ window.addEventListener("DOMContentLoaded", () => {
   try { setupImageStudio(); } catch (e) { console.error("setupImageStudio error:", e); }
   try { setupScheduleControls(); } catch (e) { console.error("setupScheduleControls error:", e); }
   try { setupSettingsControls(); } catch (e) { console.error("setupSettingsControls error:", e); }
+  try { connectMatrixSyncWebSocket(); } catch (e) { console.error("connectMatrixSyncWebSocket error:", e); }
 
   fetchConfig();
   fetchStatus();

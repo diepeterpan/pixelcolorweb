@@ -8,9 +8,9 @@
   "matrix": {
     "width": 96,
     "height": 16,
-    "brightness": 0,
+    "brightness": 12,
     "orientation": 0,
-    "power": false
+    "power": true
   },
   "mode": "text_message",
   "text": {
@@ -24,6 +24,7 @@
     "save_slot": 0
   },
   "active_script_id": "rainbow_welcome",
+  "active_image": null,
   "clock": {
     "style": 1,
     "show_date": true,
@@ -55,14 +56,17 @@
   "presets": [],
   "active_text_message": {
     "name": "custom_msg",
-    "text": "\ud83c\udf84\u26c4\ud83c\udf81\ud83d\udd14\ud83c\udf85\u2744\ufe0f",
-    "font_id": "PressStart2P",
-    "font_size": 11,
-    "text_color": "#00ff62",
+    "text": "\ud83d\udc01",
+    "font_id": "DejaVuSans",
+    "font_size": 10,
+    "text_color": "#ffffff",
     "bg_color": "#000000",
     "alignment": "center",
     "antialias": false,
-    "refresh_interval": 0,
-    "v_alignment": "middle"
+    "refresh_interval": 1,
+    "v_alignment": "middle",
+    "scroll_enabled": true,
+    "scroll_direction": "rtl",
+    "scroll_speed": 80
   }
 }

@@ -242,7 +242,7 @@ class ImageManager:
             is_temp = is_temporary or clean_name.startswith("__")
 
             buf = io.BytesIO()
-            img.save(buf, format="PNG")
+            img.save(buf, format="PNG", optimize=True, compress_level=9)
             img_bytes = buf.getvalue()
 
             if is_temp:
