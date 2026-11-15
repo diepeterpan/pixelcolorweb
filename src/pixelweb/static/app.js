@@ -94,8 +94,13 @@ function drawMatrixPreview() {
           if (sampleX < fullCols) {
             rgb = state.previewBitmap[r][sampleX] || [0, 0, 0];
           } else {
-            // In the 24px spacer region between loops, use background color (first pixel color or black)
-            rgb = state.previewBitmap[r][0] || [0, 0, 0];
+            // In the 24px spacer region between loops, use background color (clean blank space)
+            let bgHex = (state.config?.active_text_message?.bg_color || state.preview.bg_color || "#000000").replace("#", "");
+            if (bgHex.length === 6) {
+              rgb = [parseInt(bgHex.slice(0, 2), 16), parseInt(bgHex.slice(2, 4), 16), parseInt(bgHex.slice(4, 6), 16)];
+            } else {
+              rgb = [0, 0, 0];
+            }
           }
         } else {
           rgb = state.previewBitmap[r][c] || [0, 0, 0];
