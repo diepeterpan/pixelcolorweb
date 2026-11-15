@@ -8,7 +8,7 @@
   "matrix": {
     "width": 96,
     "height": 16,
-    "brightness": 12,
+    "brightness": 10,
     "orientation": 0,
     "power": true
   },
@@ -53,20 +53,27 @@
       }
     ]
   },
+  "ble": {
+    "png_mode": "rgb_max",
+    "chunk_pacing_ms": 1.5,
+    "max_chunk_size": 509
+  },
   "presets": [],
   "active_text_message": {
     "name": "custom_msg",
-    "text": "\ud83d\udc01",
-    "font_id": "DejaVuSans",
-    "font_size": 10,
-    "text_color": "#ffffff",
+    "text": "Testing 1.2.3",
+    "font_id": "PressStart2P",
+    "font_size": 6,
+    "text_color": "#00ff62",
     "bg_color": "#000000",
     "alignment": "center",
     "antialias": false,
-    "refresh_interval": 1,
+    "refresh_interval": 0,
     "v_alignment": "middle",
     "scroll_enabled": true,
     "scroll_direction": "rtl",
-    "scroll_speed": 80
+    "scroll_speed": 80,
+    "frame_skip_enabled": true,
+    "frame_skip_step": 16
   }
 }

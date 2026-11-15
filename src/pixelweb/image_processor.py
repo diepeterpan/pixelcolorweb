@@ -264,3 +264,31 @@ class ImageManager:
             }
 
 image_manager = ImageManager()
+
+
+def encode_matrix_png(img: Image.Image, png_mode: str = "rgb_max") -> bytes:
+    """
+    Encode a PIL Image for matrix display with configurable PNG compression.
+    - 'rgb_max': RGB mode with compress_level=9 (smallest byte size, higher MCU decompression load)
+    - 'rgb_raw': RGB mode with compress_level=0 (fastest host encoding, zlib uncompressed stored blocks, lower MCU decode load)
+    - 'palette': 8-bit Palette mode (P) with adaptive 256-color palette and compress_level=9 (smallest payload for 16-color/text art)
+    """
+    buf = io.BytesIO()
+    mode = (png_mode or "rgb_max").lower()
+
+    if mode == "palette":
+        # Quantize or convert to palette mode
+        if img.mode != "P":
+            pal_img = img.convert("RGB").quantize(colors=256, method=Image.Quantize.FASTOCTREE)
+        else:
+            pal_img = img
+        pal_img.save(buf, format="PNG", optimize=True, compress_level=9)
+    elif mode == "rgb_raw":
+        rgb_img = img.convert("RGB") if img.mode != "RGB" else img
+        rgb_img.save(buf, format="PNG", compress_level=0)
+    else:  # 'rgb_max' default
+        rgb_img = img.convert("RGB") if img.mode != "RGB" else img
+        rgb_img.save(buf, format="PNG", optimize=True, compress_level=9)
+
+    return buf.getvalue()
+

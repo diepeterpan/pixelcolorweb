@@ -8,6 +8,7 @@ const state = {
   activeTab: "tab-dashboard",
   previewMode: "bitmap", // "bitmap" or "text"
   previewBitmap: null,    // 16 rows x N cols [r,g,b]
+  minScrollSpeed: 80,
   scrolling: {
     enabled: false,
     direction: "rtl",
@@ -26,6 +27,10 @@ const state = {
     scrollOffset: 0
   }
 };
+
+function updateScrollSpeedConstraints(minSpeed) {
+  // Speed constraints are disabled per user preference
+}
 
 // Canvas Preview Setup
 const canvas = document.getElementById("matrix-canvas");
@@ -250,13 +255,50 @@ async function fetchConfig() {
       if (dashSched) dashSched.textContent = data.schedule.enabled ? "Active" : "Disabled";
       renderScheduleTable(data.schedule.slots || []);
     }
+    if (data.min_scroll_speed) {
+      updateScrollSpeedConstraints(data.min_scroll_speed);
+    }
     if (data.active_text_message) {
       const atm = data.active_text_message;
       if (atm.scroll_enabled) {
         state.scrolling.enabled = true;
         state.scrolling.direction = atm.scroll_direction || "rtl";
-        state.scrolling.speed = Math.max(80, atm.scroll_speed || 80);
+        state.scrolling.speed = atm.scroll_speed || 80;
+        state.scrolling.frameSkip = !!atm.frame_skip_enabled;
+        state.scrolling.frameSkipStep = atm.frame_skip_step || 1;
       }
+    }
+    if (data.ble) {
+      const b = data.ble;
+      const pngMode = b.png_mode || "rgb_max";
+      const pacing = b.chunk_pacing_ms !== undefined ? b.chunk_pacing_ms : 1.5;
+      const chunkCap = b.max_chunk_size || 509;
+
+      // Update Dashboard Tile
+      const dashPngBadge = document.getElementById("dash-ble-png-badge");
+      const dashPngLabel = document.getElementById("dash-ble-png-label");
+      const dashChunkCap = document.getElementById("dash-ble-chunk-cap");
+      const dashPacing = document.getElementById("dash-ble-pacing");
+
+      if (dashPngBadge) dashPngBadge.textContent = pngMode;
+      if (dashPngLabel) {
+        const labels = {
+          rgb_raw: "Uncompressed (Fastest Decode)",
+          rgb_max: "Max Compressed (Smallest)",
+          palette: "8-Bit Palette (Adaptive)"
+        };
+        dashPngLabel.textContent = labels[pngMode] || pngMode;
+      }
+      if (dashChunkCap) dashChunkCap.textContent = `${chunkCap} B (Cap)`;
+      if (dashPacing) dashPacing.textContent = `${pacing} ms`;
+
+      // Sync Settings inputs
+      const selPngMode = document.getElementById("ble-png-mode");
+      if (selPngMode) selPngMode.value = pngMode;
+      const inpChunkSize = document.getElementById("ble-chunk-size");
+      if (inpChunkSize) inpChunkSize.value = chunkCap;
+      const inpPacing = document.getElementById("ble-chunk-pacing");
+      if (inpPacing) inpPacing.value = pacing;
     }
   } catch (err) {
     console.error("Error fetching config:", err);
@@ -307,6 +349,15 @@ async function fetchStatus() {
         }
       }
       if (bleFirmwareEl) bleFirmwareEl.textContent = b.mcu_version || "v1.0 (96x16)";
+      if (b.chunk_size) {
+        const dashChunkCap = document.getElementById("dash-ble-chunk-cap");
+        if (dashChunkCap && b.negotiated_mtu) {
+          dashChunkCap.textContent = `${b.chunk_size} B (MTU ${b.negotiated_mtu})`;
+        }
+      }
+      if (b.calculated_avg_total_ms || data.min_scroll_speed) {
+        updateScrollSpeedConstraints(b.calculated_avg_total_ms || data.min_scroll_speed);
+      }
     } else if (!data.connected) {
       if (bleSignalEl) {
         bleSignalEl.textContent = "Offline";
@@ -2263,9 +2314,44 @@ function setupTextMessageStudio() {
 
   // Horizontal Scrolling Controls
   const scrollEnabledCheckbox = document.getElementById("msg-scroll-enabled");
+  const frameSkipToggleContainer = document.getElementById("container-frame-skip-toggle");
+  const frameSkipCheckbox = document.getElementById("msg-frame-skip-enabled");
+  const scrollRateContainer = document.getElementById("scroll-rate-container");
+  const containerScrollSpeed = document.getElementById("container-scroll-speed");
+  const containerFrameSkipStep = document.getElementById("container-frame-skip-step");
   const scrollSpeedInput = document.getElementById("msg-scroll-speed");
+  const frameSkipStepInput = document.getElementById("msg-frame-skip-step");
+  const scrollDirContainer = document.getElementById("scroll-direction-container");
   const btnScrollRtl = document.getElementById("btn-scroll-rtl");
   const btnScrollLtr = document.getElementById("btn-scroll-ltr");
+
+  function syncScrollUiVisibility() {
+    const isScrolling = scrollEnabledCheckbox ? scrollEnabledCheckbox.checked : false;
+    const isFrameSkip = frameSkipCheckbox ? frameSkipCheckbox.checked : false;
+
+    if (frameSkipToggleContainer) {
+      if (isScrolling) frameSkipToggleContainer.classList.remove("hidden");
+      else frameSkipToggleContainer.classList.add("hidden");
+    }
+    if (scrollRateContainer) {
+      if (isScrolling) scrollRateContainer.classList.remove("hidden");
+      else scrollRateContainer.classList.add("hidden");
+    }
+    if (scrollDirContainer) {
+      if (isScrolling) scrollDirContainer.classList.remove("hidden");
+      else scrollDirContainer.classList.add("hidden");
+    }
+
+    if (isScrolling) {
+      if (isFrameSkip) {
+        if (containerScrollSpeed) containerScrollSpeed.classList.add("hidden");
+        if (containerFrameSkipStep) containerFrameSkipStep.classList.remove("hidden");
+      } else {
+        if (containerScrollSpeed) containerScrollSpeed.classList.remove("hidden");
+        if (containerFrameSkipStep) containerFrameSkipStep.classList.add("hidden");
+      }
+    }
+  }
 
   let currentAlignment = "center";
   let currentVAlignment = "middle";
@@ -2439,13 +2525,28 @@ function setupTextMessageStudio() {
   if (scrollEnabledCheckbox) {
     scrollEnabledCheckbox.addEventListener("change", () => {
       state.scrolling.enabled = scrollEnabledCheckbox.checked;
+      syncScrollUiVisibility();
       triggerPreview();
+    });
+  }
+
+  if (frameSkipCheckbox) {
+    frameSkipCheckbox.addEventListener("change", () => {
+      state.scrolling.frameSkip = frameSkipCheckbox.checked;
+      syncScrollUiVisibility();
+      triggerPreview();
+    });
+  }
+
+  if (frameSkipStepInput) {
+    frameSkipStepInput.addEventListener("input", () => {
+      state.scrolling.frameSkipStep = Math.max(1, parseInt(frameSkipStepInput.value, 10) || 1);
     });
   }
 
   if (scrollSpeedInput) {
     scrollSpeedInput.addEventListener("input", () => {
-      const spd = Math.max(80, parseInt(scrollSpeedInput.value, 10) || 80);
+      const spd = Math.max(10, parseInt(scrollSpeedInput.value, 10) || 80);
       state.scrolling.speed = spd;
     });
   }
@@ -2522,7 +2623,8 @@ function setupTextMessageStudio() {
 
   async function fetchRenderedPreview() {
     const isScrolling = scrollEnabledCheckbox ? scrollEnabledCheckbox.checked : false;
-    const scrollSpd = scrollSpeedInput ? Math.max(80, parseInt(scrollSpeedInput.value, 10) || 80) : 80;
+    const minSpd = state.minScrollSpeed || 80;
+    const scrollSpd = scrollSpeedInput ? Math.max(minSpd, parseInt(scrollSpeedInput.value, 10) || minSpd) : minSpd;
 
     const payload = {
       name: configNameInput.value.trim() || "untitled",
@@ -2608,7 +2710,9 @@ function setupTextMessageStudio() {
 
     const intervalVal = refreshIntervalInput ? (parseInt(refreshIntervalInput.value, 10) || 0) : 0;
     const isScrolling = scrollEnabledCheckbox ? scrollEnabledCheckbox.checked : false;
-    const scrollSpd = scrollSpeedInput ? Math.max(80, parseInt(scrollSpeedInput.value, 10) || 80) : 80;
+    const isFrameSkip = frameSkipCheckbox ? frameSkipCheckbox.checked : false;
+    const skipStep = frameSkipStepInput ? Math.max(1, parseInt(frameSkipStepInput.value, 10) || 1) : 1;
+    const scrollSpd = scrollSpeedInput ? Math.max(10, parseInt(scrollSpeedInput.value, 10) || 80) : 80;
 
     const payload = {
       name: configNameInput.value.trim() || "untitled",
@@ -2623,7 +2727,9 @@ function setupTextMessageStudio() {
       refresh_interval: intervalVal,
       scroll_enabled: isScrolling,
       scroll_direction: currentScrollDirection,
-      scroll_speed: scrollSpd
+      scroll_speed: scrollSpd,
+      frame_skip_enabled: isFrameSkip,
+      frame_skip_step: skipStep
     };
 
     try {
@@ -2667,7 +2773,9 @@ function setupTextMessageStudio() {
     }
     const intervalVal = refreshIntervalInput ? (parseInt(refreshIntervalInput.value, 10) || 0) : 0;
     const isScrolling = scrollEnabledCheckbox ? scrollEnabledCheckbox.checked : false;
-    const scrollSpd = scrollSpeedInput ? Math.max(80, parseInt(scrollSpeedInput.value, 10) || 80) : 80;
+    const isFrameSkip = frameSkipCheckbox ? frameSkipCheckbox.checked : false;
+    const skipStep = frameSkipStepInput ? Math.max(1, parseInt(frameSkipStepInput.value, 10) || 1) : 1;
+    const scrollSpd = scrollSpeedInput ? Math.max(10, parseInt(scrollSpeedInput.value, 10) || 80) : 80;
 
     const payload = {
       name: name,
@@ -2683,7 +2791,9 @@ function setupTextMessageStudio() {
       refresh_interval: intervalVal,
       scroll_enabled: isScrolling,
       scroll_direction: currentScrollDirection,
-      scroll_speed: scrollSpd
+      scroll_speed: scrollSpd,
+      frame_skip_enabled: isFrameSkip,
+      frame_skip_step: skipStep
     };
 
     const res = await fetch("/api/text-message/save", {
@@ -2763,11 +2873,21 @@ function setupTextMessageStudio() {
           scrollEnabledCheckbox.checked = !!c.scroll_enabled;
           state.scrolling.enabled = !!c.scroll_enabled;
         }
+        if (frameSkipCheckbox) {
+          frameSkipCheckbox.checked = !!c.frame_skip_enabled;
+          state.scrolling.frameSkip = !!c.frame_skip_enabled;
+        }
+        if (frameSkipStepInput) {
+          const stepVal = c.frame_skip_step || 1;
+          frameSkipStepInput.value = stepVal;
+          state.scrolling.frameSkipStep = stepVal;
+        }
         if (scrollSpeedInput) {
-          const spd = Math.max(80, c.scroll_speed || 80);
+          const spd = Math.max(10, c.scroll_speed || 80);
           scrollSpeedInput.value = spd;
           state.scrolling.speed = spd;
         }
+        syncScrollUiVisibility();
         currentScrollDirection = c.scroll_direction === "ltr" ? "ltr" : "rtl";
         state.scrolling.direction = currentScrollDirection;
         if (btnScrollRtl && btnScrollLtr) {
@@ -2846,6 +2966,113 @@ function setupSettingsControls() {
       btnSave.textContent = "Save";
     }
   });
+
+  // BLE Transmission & Image Encoding Controls
+  const selPngMode = document.getElementById("ble-png-mode");
+  const inpChunkSize = document.getElementById("ble-chunk-size");
+  const inpPacing = document.getElementById("ble-chunk-pacing");
+  const btnSaveBle = document.getElementById("btn-save-ble-settings");
+  const bleStatusMsg = document.getElementById("ble-settings-status-msg");
+  const btnBenchmark = document.getElementById("btn-run-benchmark");
+
+  if (btnSaveBle) {
+    btnSaveBle.addEventListener("click", async () => {
+      btnSaveBle.disabled = true;
+      try {
+        const payload = {
+          ble: {
+            png_mode: selPngMode ? selPngMode.value : "rgb_raw",
+            max_chunk_size: inpChunkSize ? parseInt(inpChunkSize.value, 10) : 509,
+            chunk_pacing_ms: inpPacing ? parseFloat(inpPacing.value) : 1.5
+          }
+        };
+
+        const res = await fetch("/api/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+          if (bleStatusMsg) {
+            bleStatusMsg.textContent = "✓ BLE transmission settings saved!";
+            bleStatusMsg.className = "text-xs text-emerald-600 font-semibold";
+            setTimeout(() => { if (bleStatusMsg) bleStatusMsg.textContent = ""; }, 4000);
+          }
+          await fetchConfig();
+        } else {
+          alert("Failed to save BLE settings.");
+        }
+      } catch (err) {
+        alert("Error saving BLE settings: " + err.message);
+      } finally {
+        btnSaveBle.disabled = false;
+      }
+    });
+  }
+
+  if (btnBenchmark) {
+    btnBenchmark.addEventListener("click", async () => {
+      btnBenchmark.disabled = true;
+      const prevHtml = btnBenchmark.innerHTML;
+      btnBenchmark.innerHTML = `<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> Running (3 runs each)...`;
+      if (window.lucide) lucide.createIcons();
+
+      const resultsBox = document.getElementById("benchmark-results-box");
+      const tableBody = document.getElementById("benchmark-table-body");
+      const badge = document.getElementById("benchmark-status-badge");
+
+      try {
+        const res = await fetch("/api/ble/benchmark?iterations=3", { method: "POST" });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || "Benchmark failed");
+        }
+
+        if (resultsBox) resultsBox.classList.remove("hidden");
+        if (badge) {
+          badge.textContent = `Completed (${data.active_mode || "BLE 4.2"})`;
+        }
+
+        if (tableBody && data.results) {
+          const modeLabels = {
+            rgb_raw: "Uncompressed (compress_level=0)",
+            rgb_max: "Max Compressed (compress_level=9)",
+            palette: "8-Bit Palette (mode='P')"
+          };
+
+          const resultsList = Array.isArray(data.results) ? data.results : Object.entries(data.results).map(([m, r]) => ({ mode: m, ...r }));
+
+          tableBody.innerHTML = resultsList.map(r => {
+            const m = r.mode;
+            const label = modeLabels[m] || m;
+            const txVal = r.tx_ms !== undefined ? r.tx_ms : (r.avg_tx_ms !== undefined ? r.avg_tx_ms : '--');
+            const ackVal = r.ack_ms !== undefined ? r.ack_ms : (r.avg_ack_ms !== undefined ? r.avg_ack_ms : '--');
+            const totalVal = r.total_ms !== undefined ? r.total_ms : (r.avg_total_ms !== undefined ? r.avg_total_ms : '--');
+            const bytesVal = r.bytes !== undefined ? r.bytes : (r.png_bytes !== undefined ? r.png_bytes : '--');
+
+            return `
+              <tr class="hover:bg-slate-50">
+                <td class="py-1.5 font-bold">${m} <span class="text-[10px] text-slate-500 font-normal">(${label})</span></td>
+                <td class="py-1.5">${bytesVal} B</td>
+                <td class="py-1.5 text-indigo-600 font-semibold">${txVal !== '--' ? txVal + ' ms' : '--'}</td>
+                <td class="py-1.5 text-amber-600 font-semibold">${ackVal !== '--' ? ackVal + ' ms' : '--'}</td>
+                <td class="py-1.5 text-emerald-700 font-bold">${totalVal !== '--' ? totalVal + ' ms' : '--'}</td>
+              </tr>
+            `;
+          }).join("");
+
+          const curMode = selPngMode ? selPngMode.value : "rgb_raw";
+        }
+      } catch (err) {
+        alert("Benchmark error: " + err.message);
+      } finally {
+        btnBenchmark.disabled = false;
+        btnBenchmark.innerHTML = prevHtml;
+        if (window.lucide) lucide.createIcons();
+      }
+    });
+  }
 }
 
 // WebSocket Hardware Matrix Sync Client
@@ -2888,7 +3115,7 @@ function connectMatrixSyncWebSocket() {
             const pixelShift = document.getElementById("sim-pixel-shift");
             const actualBle = document.getElementById("sim-actual-ble");
 
-            if (targetSpeed) targetSpeed.textContent = `${msg.target_speed_ms}ms`;
+            if (targetSpeed) targetSpeed.textContent = msg.frame_skip ? `Skip: ${msg.pixel_shift}f` : `${msg.target_speed_ms}ms`;
             if (pixelShift) pixelShift.textContent = `${msg.pixel_shift}px`;
             if (actualBle) {
               actualBle.textContent = `${msg.actual_ble_ms}ms`;

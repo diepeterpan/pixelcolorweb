@@ -39,6 +39,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "enabled": False,
         "slots": []
     },
+    "ble": {
+        "png_mode": "rgb_max",
+        "chunk_pacing_ms": 1.5,
+        "max_chunk_size": 509
+    },
     "presets": []
 }
 

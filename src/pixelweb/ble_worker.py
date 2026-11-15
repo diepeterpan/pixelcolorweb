@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from typing import Any, Dict, List, Optional
 from bleak import BleakScanner
 from pypixelcolor.client import AsyncClient
@@ -23,6 +24,17 @@ class BLEWorker:
         self.queue: asyncio.Queue = asyncio.Queue()
         self.worker_task: Optional[asyncio.Task] = None
         self.reconnect_task: Optional[asyncio.Task] = None
+        self.negotiated_mtu: int = 517
+        self.effective_chunk_size: int = 509
+        self.last_transfer_metrics: Dict[str, Any] = {
+            "bytes_sent": 0,
+            "chunks_count": 0,
+            "chunk_size": 509,
+            "tx_ms": 0,
+            "ack_ms": 0,
+            "total_ms": 0,
+            "throughput_kbps": 0.0
+        }
         self.last_status: Dict[str, Any] = {
             "connected": False,
             "address": None,
@@ -137,6 +149,32 @@ class BLEWorker:
                 "max_throughput": "~80-100 KB/s"
             }
 
+    def _get_effective_chunk_size(self) -> int:
+        """Calculate chunk payload size bounded by negotiated MTU and config cap."""
+        ble_cfg = config_manager.get().get("ble", {})
+        config_max = int(ble_cfg.get("max_chunk_size", 509))
+        mtu_max = max(20, self.negotiated_mtu - 3)
+        return min(config_max, mtu_max)
+
+    async def _negotiate_mtu_and_caps(self):
+        """Query bleak backend MTU and capabilities after connecting."""
+        try:
+            if self.client and self.client._session and self.client._session._client:
+                backend = self.client._session._client
+                mtu = getattr(backend, "mtu_size", None)
+                if mtu and isinstance(mtu, int) and mtu > 23:
+                    self.negotiated_mtu = mtu
+                else:
+                    self.negotiated_mtu = 517  # Standard Linux BlueZ 5.82 negotiated MTU
+            else:
+                self.negotiated_mtu = 517
+        except Exception as e:
+            logger.warning(f"Failed to query negotiated MTU: {e}")
+            self.negotiated_mtu = 517
+
+        self.effective_chunk_size = self._get_effective_chunk_size()
+        logger.info(f"BLE connection MTU: {self.negotiated_mtu}, effective chunk size: {self.effective_chunk_size} bytes")
+
     async def connect_device(self, address: str, name: Optional[str] = None) -> bool:
         if self.connected and self.current_address == address:
             return True
@@ -182,6 +220,7 @@ class BLEWorker:
 
             self.connected = True
             self.current_address = address
+            await self._negotiate_mtu_and_caps()
 
             # Prepare telemetry info
             adapter_info = await self._query_adapter_info()
@@ -317,8 +356,8 @@ class BLEWorker:
     async def _send_plan_fast(self, plan: SendPlan, ack_timeout: float = 3.0) -> bool:
         """
         Fast-path GATT transport for 96x16 frames:
-        Uses Write Without Response (response=False) with 1.5ms pacing between chunks
-        and waits for matrix hardware ACK (window_event & all_event on NOTIFY_UUID).
+        Uses dynamic chunk size bounded by negotiated MTU, configurable pacing between chunks,
+        Write Without Response (response=False), and measures TX vs MCU ACK time.
         Falls back to response=True if response=False fails or times out.
         """
         if not self.client or not self.client._session:
@@ -331,19 +370,59 @@ class BLEWorker:
         if not bleak_client or not ack_mgr:
             return False
 
+        ble_cfg = config_manager.get().get("ble", {})
+        pacing_sec = float(ble_cfg.get("chunk_pacing_ms", 1.5)) / 1000.0
+        effective_chunk = self._get_effective_chunk_size()
+
+        # Recalculate plan chunk size dynamically
+        plan_chunk_size = effective_chunk
+
         async def _execute_transport(use_unack: bool) -> bool:
+            t0 = time.perf_counter()
+            total_bytes = 0
+            total_chunks = 0
+            tx_time_accum = 0.0
+            ack_time_accum = 0.0
+
             for idx, win in enumerate(plan.windows):
                 ack_mgr.reset()
-                for chunk in _chunk_bytes(win.data, plan.chunk_size):
+                chunks = list(_chunk_bytes(win.data, plan_chunk_size))
+                total_chunks += len(chunks)
+                total_bytes += len(win.data)
+
+                t_tx_start = time.perf_counter()
+                for c_idx, chunk in enumerate(chunks):
                     await bleak_client.write_gatt_char(WRITE_UUID, chunk, response=not use_unack)
-                    if use_unack:
-                        await asyncio.sleep(0.0015)  # 1.5ms pacing to avoid BLE RX buffer overrun
+                    if use_unack and c_idx < len(chunks) - 1:
+                        await asyncio.sleep(pacing_sec)
+                tx_time_accum += (time.perf_counter() - t_tx_start)
+
                 if plan.ack_policy.ack_per_window and win.requires_ack:
+                    t_ack_start = time.perf_counter()
                     await asyncio.wait_for(ack_mgr.window_event.wait(), timeout=ack_timeout)
+                    ack_time_accum += (time.perf_counter() - t_ack_start)
 
             if plan.ack_policy.ack_final:
+                t_ack_start = time.perf_counter()
                 await asyncio.wait_for(ack_mgr.all_event.wait(), timeout=ack_timeout)
+                ack_time_accum += (time.perf_counter() - t_ack_start)
 
+            t_total = time.perf_counter() - t0
+            tx_ms = int(tx_time_accum * 1000)
+            ack_ms = int(ack_time_accum * 1000)
+            total_ms = int(t_total * 1000)
+            kbps = round((total_bytes / 1024.0) / (t_total if t_total > 0 else 0.001), 1)
+
+            self.last_transfer_metrics = {
+                "bytes_sent": total_bytes,
+                "chunks_count": total_chunks,
+                "chunk_size": plan_chunk_size,
+                "tx_ms": tx_ms,
+                "ack_ms": ack_ms,
+                "total_ms": total_ms,
+                "throughput_kbps": kbps,
+                "unack": use_unack
+            }
             return True
 
         # Try fast path (response=False)

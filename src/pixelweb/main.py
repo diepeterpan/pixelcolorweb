@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from .logger_config import setup_logging
 from .config_manager import config_manager
 from .script_runner import script_manager
-from .image_processor import image_manager, UPLOAD_DIR
+from .image_processor import image_manager, UPLOAD_DIR, encode_matrix_png
 from .ble_worker import ble_worker
 from .scheduler import scheduler_service
 from .text_message_renderer import (
@@ -95,6 +95,8 @@ class TextMessageRenderPayload(BaseModel):
     scroll_enabled: bool = False
     scroll_direction: str = "rtl" # "rtl" (Right to Left) or "ltr" (Left to Right)
     scroll_speed: int = 80 # Milliseconds per pixel step (min 80)
+    frame_skip_enabled: bool = False
+    frame_skip_step: int = 1 # Number of pixels/frames to shift when frame skip is enabled
 
 @app.on_event("startup")
 async def on_startup():
@@ -127,6 +129,10 @@ async def update_config(updates: Dict[str, Any]):
 async def get_status():
     status = dict(ble_worker.last_status)
     status["scroll_metrics"] = scheduler_service.scroll_metrics
+    if "ble_info" in status and isinstance(status["ble_info"], dict):
+        status["ble_info"]["chunk_size"] = ble_worker.effective_chunk_size
+        status["ble_info"]["negotiated_mtu"] = ble_worker.negotiated_mtu
+        status["ble_info"]["last_transfer"] = ble_worker.last_transfer_metrics
     return status
 
 # WebSocket Connection Manager for Live Hardware Simulator Synchronization
@@ -218,6 +224,63 @@ async def connect_ble(payload: ConnectPayload):
 async def disconnect_ble():
     await ble_worker.disconnect()
     return {"success": True}
+
+@app.post("/api/ble/benchmark")
+async def benchmark_ble_modes():
+    """Run an automated benchmark comparing PNG compression modes on matrix."""
+    if not ble_worker.connected or not ble_worker.client:
+        raise HTTPException(status_code=400, detail="Matrix display not connected via BLE")
+
+    from PIL import Image, ImageDraw
+    import time
+
+    # Generate a realistic text test pattern image (96x16)
+    bench_img = Image.new("RGB", (96, 16), (0, 0, 0))
+    d = ImageDraw.Draw(bench_img)
+    d.text((2, 1), "BENCHMARK 96x16", fill=(255, 0, 128))
+    for x in range(0, 96, 4):
+        d.point((x, 14), fill=(0, 255, 200))
+
+    modes_to_test = ["rgb_max", "rgb_raw", "palette"]
+    results = []
+
+    for mode in modes_to_test:
+        t_enc_start = time.perf_counter()
+        png_bytes = encode_matrix_png(bench_img, png_mode=mode)
+        enc_ms = round((time.perf_counter() - t_enc_start) * 1000, 2)
+        byte_len = len(png_bytes)
+
+        t_send_start = time.perf_counter()
+        ok = await ble_worker.send_image_bytes(png_bytes, file_ext=".png")
+        total_transfer_ms = round((time.perf_counter() - t_send_start) * 1000, 1)
+
+        metrics = ble_worker.last_transfer_metrics
+        tx_ms = metrics.get("tx_ms", 0)
+        ack_ms = metrics.get("ack_ms", 0)
+        chunks = metrics.get("chunks_count", 0)
+
+        results.append({
+            "mode": mode,
+            "success": ok,
+            "bytes": byte_len,
+            "encode_ms": enc_ms,
+            "chunks": chunks,
+            "tx_ms": tx_ms,
+            "ack_ms": ack_ms,
+            "total_ms": total_transfer_ms,
+            "min_scroll_speed_ms": max(60, int(total_transfer_ms * 1.15))
+        })
+        await asyncio.sleep(0.3)
+
+    # Restore current active display frame if active_matrix_frame.png exists
+    try:
+        active_frame = image_manager.get_in_memory_image("active_matrix_frame.png")
+        if active_frame:
+            await ble_worker.send_image_bytes(active_frame, file_ext=".png")
+    except Exception:
+        pass
+
+    return {"results": results, "active_mode": config_manager.get().get("ble", {}).get("png_mode", "rgb_max")}
 
 # Text Display Endpoints
 @app.post("/api/text")
@@ -390,7 +453,9 @@ async def preview_text_message(payload: TextMessageRenderPayload):
         "fits_hardware": fits,
         "scroll_enabled": payload.scroll_enabled,
         "scroll_direction": payload.scroll_direction,
-        "scroll_speed": payload.scroll_speed
+        "scroll_speed": payload.scroll_speed,
+        "frame_skip_enabled": payload.frame_skip_enabled,
+        "frame_skip_step": payload.frame_skip_step
     }
 
 @app.post("/api/text-message/save")
@@ -436,9 +501,9 @@ async def send_text_message(payload: TextMessageRenderPayload):
     else:
         first_frame = rgb_img
 
-    buf = BytesIO()
-    first_frame.save(buf, format="PNG", optimize=True, compress_level=9)
-    img_bytes = buf.getvalue()
+    ble_cfg = config_manager.get().get("ble", {})
+    png_mode = ble_cfg.get("png_mode", "rgb_raw")
+    img_bytes = encode_matrix_png(first_frame, png_mode=png_mode)
     image_manager.set_in_memory_image("active_matrix_frame.png", img_bytes)
 
     # Extract pixels for simulator sync (full canvas so frontend simulator can also animate)
@@ -459,7 +524,9 @@ async def send_text_message(payload: TextMessageRenderPayload):
         "fits_hardware": content_w <= 96 or payload.scroll_enabled,
         "scroll_enabled": payload.scroll_enabled,
         "scroll_direction": payload.scroll_direction,
-        "scroll_speed": payload.scroll_speed
+        "scroll_speed": payload.scroll_speed,
+        "frame_skip_enabled": payload.frame_skip_enabled,
+        "frame_skip_step": payload.frame_skip_step
     }
 
 # Scheduling Endpoints

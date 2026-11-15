@@ -8,6 +8,7 @@ from PIL import Image
 from .config_manager import config_manager
 from .script_runner import script_manager
 from .ble_worker import ble_worker
+from .image_processor import encode_matrix_png
 from .text_message_renderer import render_text_message, get_text_message_config
 
 logger = logging.getLogger("Scheduler")
@@ -71,8 +72,11 @@ class SchedulerService:
                     await asyncio.sleep(0.2)
                     continue
 
+                ble_cfg = cfg.get("ble", {})
+                png_mode = ble_cfg.get("png_mode", "rgb_raw")
+
                 # Generate a unique hash key for current text config to know if content changed
-                curr_key = f"{msg_cfg.get('text')}_{msg_cfg.get('font_id')}_{msg_cfg.get('font_size')}_{msg_cfg.get('text_color')}_{msg_cfg.get('bg_color')}_{msg_cfg.get('v_alignment')}_{msg_cfg.get('antialias')}_{msg_cfg.get('scroll_direction')}_{msg_cfg.get('scroll_speed')}"
+                curr_key = f"{msg_cfg.get('text')}_{msg_cfg.get('font_id')}_{msg_cfg.get('font_size')}_{msg_cfg.get('text_color')}_{msg_cfg.get('bg_color')}_{msg_cfg.get('v_alignment')}_{msg_cfg.get('antialias')}_{msg_cfg.get('scroll_direction')}_{msg_cfg.get('scroll_speed')}_{png_mode}"
                 if curr_key != rendered_key:
                     rendered_key = curr_key
                     # Render full width canvas with blank spacing between loops (Option A)
@@ -100,13 +104,11 @@ class SchedulerService:
                     full_canvas.paste(base_img.convert("RGB"), (loop_unit_w * 2, 0))
                     canvas_w = loop_unit_w
 
-                    # Pre-render each 96x16 window as Truecolor RGB PNG (hardware standard)
+                    # Pre-render each 96x16 window using configured PNG encoding mode
                     pre_rendered_frames = []
                     for x in range(canvas_w):
                         slice_img = full_canvas.crop((x, 0, x + 96, 16)).convert("RGB")
-                        buf = io.BytesIO()
-                        slice_img.save(buf, format="PNG", optimize=True, compress_level=9)
-                        pre_rendered_frames.append(buf.getvalue())
+                        pre_rendered_frames.append(encode_matrix_png(slice_img, png_mode=png_mode))
 
                     direction = msg_cfg.get("scroll_direction", "rtl")
                     offset_x = 0 if direction == "rtl" else (canvas_w - 1)
@@ -116,8 +118,10 @@ class SchedulerService:
                     await asyncio.sleep(0.05)
                     continue
 
-                speed_ms = max(80, int(msg_cfg.get("scroll_speed", 80)))
+                speed_ms = max(10, int(msg_cfg.get("scroll_speed", 80)))
                 direction = msg_cfg.get("scroll_direction", "rtl")
+                frame_skip = bool(msg_cfg.get("frame_skip_enabled", False))
+                custom_skip_step = max(1, int(msg_cfg.get("frame_skip_step", 1)))
 
                 step_start = asyncio.get_event_loop().time()
 
@@ -130,25 +134,33 @@ class SchedulerService:
 
                 step_duration_ms = (asyncio.get_event_loop().time() - step_start) * 1000.0
 
-                # Adaptive skip: advance pixels based on time spent
-                pixels_to_advance = max(1, int(round(max(speed_ms, step_duration_ms) / speed_ms)))
+                if frame_skip:
+                    # User-configured fixed frame skip mode: advance by user-selected step
+                    pixels_to_advance = custom_skip_step
+                    remaining_sleep_ms = 5  # Run as fast as BLE allows
+                else:
+                    # Speed (ms) mode: dynamically calculate frame skip to preserve wall-clock speed
+                    pixels_to_advance = max(1, int(round(max(speed_ms, step_duration_ms) / speed_ms)))
+                    remaining_sleep_ms = max(5, speed_ms - step_duration_ms)
 
                 # Update live scrolling telemetry
                 sync_payload = {
                     "type": "frame_sync",
                     "offset": cur_x,
-                    "target_speed_ms": speed_ms,
+                    "target_speed_ms": speed_ms if not frame_skip else 0,
                     "actual_ble_ms": int(round(step_duration_ms)),
                     "pixel_shift": pixels_to_advance,
                     "direction": direction,
-                    "total_frames": len(pre_rendered_frames)
+                    "total_frames": len(pre_rendered_frames),
+                    "frame_skip": frame_skip
                 }
                 self.scroll_metrics.update({
                     "active": True,
-                    "target_speed_ms": speed_ms,
+                    "target_speed_ms": speed_ms if not frame_skip else 0,
                     "actual_ble_ms": int(round(step_duration_ms)),
                     "pixel_shift": pixels_to_advance,
-                    "direction": direction
+                    "direction": direction,
+                    "frame_skip": frame_skip
                 })
                 self.broadcast_sync(sync_payload)
 
@@ -157,7 +169,6 @@ class SchedulerService:
                 else:
                     offset_x = (offset_x - pixels_to_advance) % len(pre_rendered_frames)
 
-                remaining_sleep_ms = max(5, speed_ms - step_duration_ms)
                 await asyncio.sleep(remaining_sleep_ms / 1000.0)
 
             except asyncio.CancelledError:
@@ -298,9 +309,10 @@ class SchedulerService:
                         v_alignment=saved_cfg.get("v_alignment", "middle")
                     )
                     rgb_img = img.convert("RGB")
-                    buf = io.BytesIO()
-                    rgb_img.save(buf, format="PNG", optimize=True, compress_level=9)
-                    await ble_worker.send_image_bytes(buf.getvalue(), file_ext=".png")
+                    ble_cfg = config_manager.get().get("ble", {})
+                    png_mode = ble_cfg.get("png_mode", "rgb_raw")
+                    frame_bytes = encode_matrix_png(rgb_img, png_mode=png_mode)
+                    await ble_worker.send_image_bytes(frame_bytes, file_ext=".png")
             else:
                 raw_text = slot.get("content", "SCHEDULED TEXT")
                 await ble_worker.send_text(
