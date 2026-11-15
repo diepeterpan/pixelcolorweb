@@ -587,3 +587,26 @@ async def delete_schedule_slot(slot_id: str):
     config_manager.update({"schedule": {"slots": new_slots}})
     return {"success": True, "slots": new_slots}
 
+@app.post("/api/schedule/reorder")
+async def reorder_schedule_slots(payload: Dict[str, Any]):
+    """Reorder schedule slots by a provided list of slot IDs."""
+    slot_ids = payload.get("slot_ids", [])
+    cfg = config_manager.get()
+    slots = cfg.get("schedule", {}).get("slots", [])
+    
+    slot_map = {s.get("id"): s for s in slots if s.get("id")}
+    reordered = []
+    
+    # Append slots matching the ordered ID list
+    for sid in slot_ids:
+        if sid in slot_map:
+            reordered.append(slot_map.pop(sid))
+            
+    # Append any remaining slots not explicitly mentioned
+    for remaining in slot_map.values():
+        reordered.append(remaining)
+        
+    config_manager.update({"schedule": {"slots": reordered}})
+    return {"success": True, "slots": reordered}
+
+

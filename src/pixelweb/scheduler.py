@@ -94,6 +94,10 @@ class SchedulerService:
             "pixel_shift": 1,
             "direction": "rtl"
         }
+        self._seq_index: int = 0
+        self._seq_started_at: float = 0.0
+        self._active_track: Optional[str] = None  # "time_window" or "sequential"
+        self._last_active_slot_id: Optional[str] = None
 
     def register_sync_listener(self, callback: Callable[[Dict[str, Any]], Any]):
         self._sync_listeners.add(callback)
@@ -311,15 +315,22 @@ class SchedulerService:
                                     speed=t_cfg.get("speed", 80)
                                 )
 
-                # Time-based rule scheduler evaluation
+                # Hybrid Scheduler: Time-window Override & Sequential Duration Playlist
                 if sched_cfg.get("enabled"):
                     slots = sched_cfg.get("slots", [])
                     now = datetime.now()
+                    now_ts = asyncio.get_event_loop().time()
                     current_time_str = now.strftime("%H:%M")
                     current_date_str = now.strftime("%Y-%m-%d")
 
-                    active_slot = None
+                    # Phase 1: Check for active Time-Window Override slots
+                    active_time_slot = None
                     for slot in slots:
+                        # Time-window is default if mode not specified
+                        mode_s = slot.get("schedule_mode", "time_window")
+                        if mode_s != "time_window":
+                            continue
+
                         # Check date bounds if provided
                         start_date = slot.get("start_date")
                         end_date = slot.get("end_date")
@@ -332,19 +343,50 @@ class SchedulerService:
                         start_time = slot.get("start_time", "00:00")
                         end_time = slot.get("end_time", "23:59")
                         if start_time <= current_time_str <= end_time:
-                            active_slot = slot
+                            active_time_slot = slot
                             break
 
-                    if active_slot and active_slot.get("id") != last_slot_id:
-                        last_slot_id = active_slot.get("id")
-                        logger.info(f"Triggering scheduled slot: {active_slot.get('name')}")
-                        await self._execute_slot(active_slot)
+                    if active_time_slot:
+                        # Priority 1: Time Window Active
+                        self._active_track = "time_window"
+                        if active_time_slot.get("id") != self._last_active_slot_id:
+                            self._last_active_slot_id = active_time_slot.get("id")
+                            logger.info(f"Triggering time-window override slot: {active_time_slot.get('name')}")
+                            await self._execute_slot(active_time_slot)
+                    else:
+                        # Phase 2: No active time-window override -> Run sequential duration playlist
+                        seq_slots = [s for s in slots if s.get("schedule_mode") == "sequential"]
+                        if seq_slots:
+                            # If we just reverted from time-window or sequential timer expired
+                            reverted_from_override = (self._active_track == "time_window")
+                            self._active_track = "sequential"
+
+                            # Ensure index is within range
+                            if self._seq_index >= len(seq_slots):
+                                self._seq_index = 0
+
+                            current_seq_slot = seq_slots[self._seq_index]
+                            duration = max(2, int(current_seq_slot.get("duration_seconds", 10)))
+
+                            # Advance if duration elapsed OR if resuming from override
+                            if reverted_from_override or (now_ts - self._seq_started_at >= duration) or (self._last_active_slot_id != current_seq_slot.get("id")):
+                                if not reverted_from_override and self._last_active_slot_id == current_seq_slot.get("id"):
+                                    # Duration expired naturally: advance to next item in sequence
+                                    self._seq_index = (self._seq_index + 1) % len(seq_slots)
+                                    current_seq_slot = seq_slots[self._seq_index]
+
+                                self._seq_started_at = now_ts
+                                self._last_active_slot_id = current_seq_slot.get("id")
+                                logger.info(f"Playing sequential slot [{self._seq_index + 1}/{len(seq_slots)}]: {current_seq_slot.get('name')} for {current_seq_slot.get('duration_seconds', 10)}s")
+                                await self._execute_slot(current_seq_slot)
+                        else:
+                            self._active_track = None
 
             except Exception as e:
                 logger.error(f"Error in scheduler loop: {e}")
 
-            # Dynamic sleep interval: if fast text_message refresh is configured, wake up frequently
-            sleep_duration = 5.0
+            # Sleep interval: wake up every 1.0 second to ensure prompt sequential playlist transitions
+            sleep_duration = 1.0
             try:
                 cfg_curr = config_manager.get()
                 if cfg_curr.get("mode") == "text_message":

@@ -290,6 +290,11 @@ async function fetchConfig() {
       const msgScrollSpd = document.getElementById("msg-scroll-speed");
       if (msgScrollSpd && atm.scroll_speed) msgScrollSpd.value = atm.scroll_speed;
 
+      // Update scrolling controls visibility based on loaded config
+      if (typeof window.syncScrollUiVisibility === "function") {
+        window.syncScrollUiVisibility();
+      }
+
       // Trigger preview fetch to initialize state.previewBitmap with blur pixels
       if (typeof window.fetchRenderedPreview === "function") {
         window.fetchRenderedPreview();
@@ -1044,46 +1049,92 @@ function setupImageStudio() {
   fetchImages();
 }
 
-// Schedule Table
+// Schedule Tables: Option A (Two Distinct Sections: Fixed Time Overrides & Sequential Playlist)
 function renderScheduleTable(slots) {
-  const tbody = document.getElementById("schedule-table-body");
-  if (!tbody) return;
-  tbody.innerHTML = "";
-  if (!slots || !slots.length) {
-    tbody.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-slate-400 italic">No scheduled content slots configured. Click "+ Add Slot" above to create one.</td></tr>`;
-    return;
+  const timeBody = document.getElementById("schedule-timewindow-body");
+  const seqBody = document.getElementById("schedule-sequential-body");
+  if (!timeBody && !seqBody) return;
+
+  const allSlots = slots || [];
+
+  // 1. Render Fixed Time Window Slots (sorted by start_time)
+  if (timeBody) {
+    timeBody.innerHTML = "";
+    const timeSlots = allSlots.filter(s => (s.schedule_mode || "time_window") === "time_window");
+    timeSlots.sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
+
+    if (timeSlots.length === 0) {
+      timeBody.innerHTML = `<tr><td colspan="4" class="p-3 text-center text-slate-400 italic">No fixed time window slots configured.</td></tr>`;
+    } else {
+      timeSlots.forEach(s => {
+        const slotId = s.id || "";
+        const tr = document.createElement("tr");
+        tr.className = "border-b border-slate-100 hover:bg-indigo-50/20 transition-colors";
+        const displayContent = s.config_name || s.config_id || s.content || '-';
+        tr.innerHTML = `
+          <td class="p-2.5 font-semibold text-slate-800">${s.name || 'Slot'}</td>
+          <td class="p-2.5 font-mono text-indigo-700 font-bold">${s.start_time || '00:00'} - ${s.end_time || '00:00'}</td>
+          <td class="p-2.5 font-mono truncate max-w-xs text-slate-700 font-medium">${displayContent}</td>
+          <td class="p-2.5 text-right">
+            <div class="inline-flex items-center gap-1.5">
+              <button class="btn-3d btn-load text-xs py-1 px-2.5 rounded inline-flex items-center gap-1 font-semibold cursor-pointer" onclick="editSlot('${slotId}')">
+                <i data-lucide="edit-2" class="w-3.5 h-3.5"></i> Edit
+              </button>
+              <button class="btn-3d btn-del text-xs py-1 px-2.5 rounded inline-flex items-center gap-1 font-semibold cursor-pointer" onclick="removeSlot('${slotId}', '${(s.name || 'Slot').replace(/'/g, "\\'")}')">
+                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Delete
+              </button>
+            </div>
+          </td>
+        `;
+        timeBody.appendChild(tr);
+      });
+    }
   }
 
-  // Sort slots by start_time followed by end_time
-  const sortedSlots = [...slots].sort((a, b) => {
-    const startComp = (a.start_time || "").localeCompare(b.start_time || "");
-    if (startComp !== 0) return startComp;
-    return (a.end_time || "").localeCompare(b.end_time || "");
-  });
+  // 2. Render Sequential Playlist Slots (ordered, reorderable)
+  if (seqBody) {
+    seqBody.innerHTML = "";
+    const seqSlots = allSlots.filter(s => s.schedule_mode === "sequential");
 
-  sortedSlots.forEach((s) => {
-    const slotId = s.id || "";
-    const tr = document.createElement("tr");
-    tr.className = "border-b border-slate-100 hover:bg-slate-50 transition-colors";
-    const displayContent = s.config_name || s.config_id || s.content || s.script_id || '-';
-    tr.innerHTML = `
-      <td class="p-3 font-semibold text-slate-800">${s.name || 'Slot'}</td>
-      <td class="p-3 font-mono text-indigo-700 font-semibold">${s.start_time || '00:00'} - ${s.end_time || '00:00'}</td>
-      <td class="p-3 uppercase font-mono text-[11px] text-slate-500">${s.type || 'text_message'}</td>
-      <td class="p-3 font-mono truncate max-w-xs text-slate-700 font-medium">${displayContent}</td>
-      <td class="p-3 text-right">
-        <div class="inline-flex items-center gap-1.5">
-          <button class="btn-3d btn-load text-xs py-1 px-2.5 rounded inline-flex items-center gap-1 font-semibold cursor-pointer" onclick="editSlot('${slotId}')">
-            <i data-lucide="edit-2" class="w-3.5 h-3.5"></i> Edit
-          </button>
-          <button class="btn-3d btn-del text-xs py-1 px-2.5 rounded inline-flex items-center gap-1 font-semibold cursor-pointer" onclick="removeSlot('${slotId}', '${(s.name || 'Slot').replace(/'/g, "\\'")}')">
-            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Delete
-          </button>
-        </div>
-      </td>
-    `;
-    tbody.appendChild(tr);
-  });
+    if (seqSlots.length === 0) {
+      seqBody.innerHTML = `<tr><td colspan="5" class="p-3 text-center text-slate-400 italic">No sequential playlist slots configured. Click "+ Add Slot" above and select Sequential mode.</td></tr>`;
+    } else {
+      seqSlots.forEach((s, idx) => {
+        const slotId = s.id || "";
+        const tr = document.createElement("tr");
+        tr.className = "border-b border-slate-100 hover:bg-amber-50/20 transition-colors";
+        const displayContent = s.config_name || s.config_id || s.content || '-';
+        const isFirst = idx === 0;
+        const isLast = idx === seqSlots.length - 1;
+
+        tr.innerHTML = `
+          <td class="p-2.5 text-center font-mono font-bold text-slate-500">${idx + 1}</td>
+          <td class="p-2.5 font-semibold text-slate-800">${s.name || 'Slot'}</td>
+          <td class="p-2.5 font-mono text-amber-700 font-bold">⏱ ${s.duration_seconds || 10}s</td>
+          <td class="p-2.5 font-mono truncate max-w-xs text-slate-700 font-medium">${displayContent}</td>
+          <td class="p-2.5 text-right">
+            <div class="inline-flex items-center gap-1.5">
+              <button class="btn-3d bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs py-1 px-2 rounded font-semibold cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed" 
+                onclick="moveSlotSequential('${slotId}', -1)" ${isFirst ? 'disabled' : ''} title="Move Up">
+                <i data-lucide="arrow-up" class="w-3.5 h-3.5"></i>
+              </button>
+              <button class="btn-3d bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs py-1 px-2 rounded font-semibold cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed" 
+                onclick="moveSlotSequential('${slotId}', 1)" ${isLast ? 'disabled' : ''} title="Move Down">
+                <i data-lucide="arrow-down" class="w-3.5 h-3.5"></i>
+              </button>
+              <button class="btn-3d btn-load text-xs py-1 px-2.5 rounded inline-flex items-center gap-1 font-semibold cursor-pointer" onclick="editSlot('${slotId}')">
+                <i data-lucide="edit-2" class="w-3.5 h-3.5"></i> Edit
+              </button>
+              <button class="btn-3d btn-del text-xs py-1 px-2.5 rounded inline-flex items-center gap-1 font-semibold cursor-pointer" onclick="removeSlot('${slotId}', '${(s.name || 'Slot').replace(/'/g, "\\'")}')">
+                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Delete
+              </button>
+            </div>
+          </td>
+        `;
+        seqBody.appendChild(tr);
+      });
+    }
+  }
 
   try {
     if (window.lucide) {
@@ -1093,6 +1144,42 @@ function renderScheduleTable(slots) {
     console.error("Lucide icon generation error:", err);
   }
 }
+
+// Move Sequential Slot Up or Down
+window.moveSlotSequential = async function (slotId, delta) {
+  const slots = state.config?.schedule?.slots || [];
+  const seqSlots = slots.filter(s => s.schedule_mode === "sequential");
+  const timeSlots = slots.filter(s => (s.schedule_mode || "time_window") === "time_window");
+
+  const idx = seqSlots.findIndex(s => s.id === slotId);
+  if (idx < 0) return;
+
+  const targetIdx = idx + delta;
+  if (targetIdx < 0 || targetIdx >= seqSlots.length) return;
+
+  // Swap elements
+  const temp = seqSlots[idx];
+  seqSlots[idx] = seqSlots[targetIdx];
+  seqSlots[targetIdx] = temp;
+
+  // New total order: Time slots followed by updated sequential slots
+  const newOrderIds = [...timeSlots.map(s => s.id), ...seqSlots.map(s => s.id)];
+
+  try {
+    const res = await fetch("/api/schedule/reorder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slot_ids: newOrderIds })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      renderScheduleTable(data.slots);
+      await fetchConfig();
+    }
+  } catch (err) {
+    alert("Error reordering slots: " + err.message);
+  }
+};
 
 async function populateScheduleConfigDropdown(selectedId = "") {
   const select = document.getElementById("slot-text-msg-select");
@@ -1131,6 +1218,29 @@ function setupScheduleControls() {
   const btnCancelSlot = document.getElementById("btn-cancel-slot");
   const btnAddSlot = document.getElementById("btn-add-slot");
 
+  const modeTimeRadio = document.getElementById("slot-mode-time");
+  const modeSeqRadio = document.getElementById("slot-mode-seq");
+  const timeStartContainer = document.getElementById("drawer-time-start-container");
+  const timeEndContainer = document.getElementById("drawer-time-end-container");
+  const seqDurationContainer = document.getElementById("drawer-seq-duration-container");
+  const slotDurationInput = document.getElementById("slot-duration");
+
+  const syncDrawerModeFields = () => {
+    const isSeq = modeSeqRadio && modeSeqRadio.checked;
+    if (isSeq) {
+      if (timeStartContainer) timeStartContainer.classList.add("hidden");
+      if (timeEndContainer) timeEndContainer.classList.add("hidden");
+      if (seqDurationContainer) seqDurationContainer.classList.remove("hidden");
+    } else {
+      if (timeStartContainer) timeStartContainer.classList.remove("hidden");
+      if (timeEndContainer) timeEndContainer.classList.remove("hidden");
+      if (seqDurationContainer) seqDurationContainer.classList.add("hidden");
+    }
+  };
+
+  if (modeTimeRadio) modeTimeRadio.addEventListener("change", syncDrawerModeFields);
+  if (modeSeqRadio) modeSeqRadio.addEventListener("change", syncDrawerModeFields);
+
   const openDrawer = (isEdit = false) => {
     if (drawer) {
       drawer.classList.remove("hidden");
@@ -1139,8 +1249,12 @@ function setupScheduleControls() {
         if (drawerTitle) drawerTitle.innerHTML = `<i data-lucide="plus-circle" class="w-3.5 h-3.5 text-pink-600"></i> Create Schedule Slot`;
         if (saveBtnLabel) saveBtnLabel.textContent = "Save Slot";
         document.getElementById("slot-name").value = "";
+        if (modeTimeRadio) modeTimeRadio.checked = true;
+        if (modeSeqRadio) modeSeqRadio.checked = false;
         document.getElementById("slot-start").value = "08:00";
         document.getElementById("slot-end").value = "12:00";
+        if (slotDurationInput) slotDurationInput.value = "15";
+        syncDrawerModeFields();
         populateScheduleConfigDropdown();
       }
       const nameInput = document.getElementById("slot-name");
@@ -1169,8 +1283,15 @@ function setupScheduleControls() {
     if (saveBtnLabel) saveBtnLabel.textContent = "Update Slot";
 
     document.getElementById("slot-name").value = slot.name || "";
+    const isSeq = slot.schedule_mode === "sequential";
+    if (modeSeqRadio) modeSeqRadio.checked = isSeq;
+    if (modeTimeRadio) modeTimeRadio.checked = !isSeq;
+
     document.getElementById("slot-start").value = slot.start_time || "08:00";
     document.getElementById("slot-end").value = slot.end_time || "12:00";
+    if (slotDurationInput) slotDurationInput.value = slot.duration_seconds || "15";
+    syncDrawerModeFields();
+
     await populateScheduleConfigDropdown(slot.config_id);
 
     if (drawer) drawer.classList.remove("hidden");
@@ -1182,8 +1303,11 @@ function setupScheduleControls() {
   if (btnAddSlot) {
     btnAddSlot.addEventListener("click", async () => {
       const name = document.getElementById("slot-name").value.trim() || "Slot";
+      const isSeq = modeSeqRadio && modeSeqRadio.checked;
+      const schedule_mode = isSeq ? "sequential" : "time_window";
       const start_time = document.getElementById("slot-start").value;
       const end_time = document.getElementById("slot-end").value;
+      const duration_seconds = slotDurationInput ? Math.max(2, parseInt(slotDurationInput.value, 10) || 15) : 15;
       const select = document.getElementById("slot-text-msg-select");
       const config_id = select ? select.value : "";
       const selectedText = select && select.selectedOptions.length ? select.selectedOptions[0].textContent : config_id;
@@ -1194,16 +1318,18 @@ function setupScheduleControls() {
         return;
       }
 
-      if (!start_time || !end_time) {
-        alert("Please provide both Start Time and End Time.");
+      if (!isSeq && (!start_time || !end_time)) {
+        alert("Please provide both Start Time and End Time for Time Window mode.");
         return;
       }
 
       const slot = {
         id: existingId || ("slot_" + Date.now()),
         name,
-        start_time,
-        end_time,
+        schedule_mode,
+        start_time: isSeq ? null : start_time,
+        end_time: isSeq ? null : end_time,
+        duration_seconds: isSeq ? duration_seconds : null,
         type: "text_message",
         config_id: config_id,
         config_name: selectedText
@@ -2973,8 +3099,12 @@ function setupTextMessageStudio() {
     }
   });
 
-  // Make fetchRenderedPreview available globally for state restoration
+  // Make fetchRenderedPreview and syncScrollUiVisibility available globally
   window.fetchRenderedPreview = fetchRenderedPreview;
+  window.syncScrollUiVisibility = syncScrollUiVisibility;
+
+  // Initialize scrolling UI layout state on setup
+  syncScrollUiVisibility();
 
   loadSavedConfigsList();
   refreshImageTagDropdown();
