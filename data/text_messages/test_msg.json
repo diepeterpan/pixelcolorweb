@@ -1,0 +1,19 @@
+{
+  "name": "test_msg",
+  "text": "Testing 1.2.3",
+  "font_id": "PressStart2P",
+  "font_size": 11,
+  "text_color": "#00ff62",
+  "bg_color": "#000000",
+  "alignment": "center",
+  "antialias": false,
+  "v_alignment": "middle",
+  "refresh_interval": 0,
+  "scroll_enabled": true,
+  "scroll_direction": "rtl",
+  "scroll_speed": 80,
+  "frame_skip_enabled": true,
+  "frame_skip_step": 3,
+  "blur_enabled": true,
+  "id": "test_msg"
+}

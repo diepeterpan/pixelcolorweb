@@ -266,6 +266,33 @@ async function fetchConfig() {
         state.scrolling.speed = atm.scroll_speed || 80;
         state.scrolling.frameSkip = !!atm.frame_skip_enabled;
         state.scrolling.frameSkipStep = atm.frame_skip_step || 1;
+        state.scrolling.blur = !!atm.blur_enabled;
+      }
+      // Populate text message composer form inputs from active config
+      const msgTextInp = document.getElementById("msg-text-input");
+      if (msgTextInp && atm.text) msgTextInp.value = atm.text;
+      const msgFontSel = document.getElementById("msg-font-family");
+      if (msgFontSel && atm.font_id) msgFontSel.value = atm.font_id;
+      const msgFontSize = document.getElementById("msg-font-size");
+      if (msgFontSize && atm.font_size) msgFontSize.value = atm.font_size;
+      const msgTextColor = document.getElementById("msg-text-color");
+      if (msgTextColor && atm.text_color) msgTextColor.value = atm.text_color;
+      const msgBgColor = document.getElementById("msg-bg-color");
+      if (msgBgColor && atm.bg_color) msgBgColor.value = atm.bg_color;
+      const msgScrollEn = document.getElementById("msg-scroll-enabled");
+      if (msgScrollEn) msgScrollEn.checked = !!atm.scroll_enabled;
+      const msgFrameSkip = document.getElementById("msg-frame-skip-enabled");
+      if (msgFrameSkip) msgFrameSkip.checked = !!atm.frame_skip_enabled;
+      const msgFrameSkipStep = document.getElementById("msg-frame-skip-step");
+      if (msgFrameSkipStep && atm.frame_skip_step) msgFrameSkipStep.value = atm.frame_skip_step;
+      const msgBlur = document.getElementById("msg-blur-enabled");
+      if (msgBlur) msgBlur.checked = !!atm.blur_enabled;
+      const msgScrollSpd = document.getElementById("msg-scroll-speed");
+      if (msgScrollSpd && atm.scroll_speed) msgScrollSpd.value = atm.scroll_speed;
+
+      // Trigger preview fetch to initialize state.previewBitmap with blur pixels
+      if (typeof window.fetchRenderedPreview === "function") {
+        window.fetchRenderedPreview();
       }
     }
     if (data.ble) {
@@ -2316,6 +2343,8 @@ function setupTextMessageStudio() {
   const scrollEnabledCheckbox = document.getElementById("msg-scroll-enabled");
   const frameSkipToggleContainer = document.getElementById("container-frame-skip-toggle");
   const frameSkipCheckbox = document.getElementById("msg-frame-skip-enabled");
+  const blurToggleContainer = document.getElementById("container-blur-toggle");
+  const blurCheckbox = document.getElementById("msg-blur-enabled");
   const scrollRateContainer = document.getElementById("scroll-rate-container");
   const containerScrollSpeed = document.getElementById("container-scroll-speed");
   const containerFrameSkipStep = document.getElementById("container-frame-skip-step");
@@ -2332,6 +2361,10 @@ function setupTextMessageStudio() {
     if (frameSkipToggleContainer) {
       if (isScrolling) frameSkipToggleContainer.classList.remove("hidden");
       else frameSkipToggleContainer.classList.add("hidden");
+    }
+    if (blurToggleContainer) {
+      if (isScrolling && isFrameSkip) blurToggleContainer.classList.remove("hidden");
+      else blurToggleContainer.classList.add("hidden");
     }
     if (scrollRateContainer) {
       if (isScrolling) scrollRateContainer.classList.remove("hidden");
@@ -2538,6 +2571,13 @@ function setupTextMessageStudio() {
     });
   }
 
+  if (blurCheckbox) {
+    blurCheckbox.addEventListener("change", () => {
+      state.scrolling.blur = blurCheckbox.checked;
+      triggerPreview();
+    });
+  }
+
   if (frameSkipStepInput) {
     frameSkipStepInput.addEventListener("input", () => {
       state.scrolling.frameSkipStep = Math.max(1, parseInt(frameSkipStepInput.value, 10) || 1);
@@ -2623,8 +2663,10 @@ function setupTextMessageStudio() {
 
   async function fetchRenderedPreview() {
     const isScrolling = scrollEnabledCheckbox ? scrollEnabledCheckbox.checked : false;
-    const minSpd = state.minScrollSpeed || 80;
-    const scrollSpd = scrollSpeedInput ? Math.max(minSpd, parseInt(scrollSpeedInput.value, 10) || minSpd) : minSpd;
+    const isFrameSkip = frameSkipCheckbox ? frameSkipCheckbox.checked : false;
+    const isBlur = blurCheckbox ? blurCheckbox.checked : false;
+    const skipStep = frameSkipStepInput ? Math.max(1, parseInt(frameSkipStepInput.value, 10) || 1) : 1;
+    const scrollSpd = scrollSpeedInput ? Math.max(10, parseInt(scrollSpeedInput.value, 10) || 80) : 80;
 
     const payload = {
       name: configNameInput.value.trim() || "untitled",
@@ -2638,7 +2680,10 @@ function setupTextMessageStudio() {
       antialias: antialiasCheckbox.checked,
       scroll_enabled: isScrolling,
       scroll_direction: currentScrollDirection,
-      scroll_speed: scrollSpd
+      scroll_speed: scrollSpd,
+      frame_skip_enabled: isFrameSkip,
+      frame_skip_step: skipStep,
+      blur_enabled: isBlur
     };
 
     try {
@@ -2711,6 +2756,7 @@ function setupTextMessageStudio() {
     const intervalVal = refreshIntervalInput ? (parseInt(refreshIntervalInput.value, 10) || 0) : 0;
     const isScrolling = scrollEnabledCheckbox ? scrollEnabledCheckbox.checked : false;
     const isFrameSkip = frameSkipCheckbox ? frameSkipCheckbox.checked : false;
+    const isBlur = blurCheckbox ? blurCheckbox.checked : false;
     const skipStep = frameSkipStepInput ? Math.max(1, parseInt(frameSkipStepInput.value, 10) || 1) : 1;
     const scrollSpd = scrollSpeedInput ? Math.max(10, parseInt(scrollSpeedInput.value, 10) || 80) : 80;
 
@@ -2729,7 +2775,8 @@ function setupTextMessageStudio() {
       scroll_direction: currentScrollDirection,
       scroll_speed: scrollSpd,
       frame_skip_enabled: isFrameSkip,
-      frame_skip_step: skipStep
+      frame_skip_step: skipStep,
+      blur_enabled: isBlur
     };
 
     try {
@@ -2774,6 +2821,7 @@ function setupTextMessageStudio() {
     const intervalVal = refreshIntervalInput ? (parseInt(refreshIntervalInput.value, 10) || 0) : 0;
     const isScrolling = scrollEnabledCheckbox ? scrollEnabledCheckbox.checked : false;
     const isFrameSkip = frameSkipCheckbox ? frameSkipCheckbox.checked : false;
+    const isBlur = blurCheckbox ? blurCheckbox.checked : false;
     const skipStep = frameSkipStepInput ? Math.max(1, parseInt(frameSkipStepInput.value, 10) || 1) : 1;
     const scrollSpd = scrollSpeedInput ? Math.max(10, parseInt(scrollSpeedInput.value, 10) || 80) : 80;
 
@@ -2793,7 +2841,8 @@ function setupTextMessageStudio() {
       scroll_direction: currentScrollDirection,
       scroll_speed: scrollSpd,
       frame_skip_enabled: isFrameSkip,
-      frame_skip_step: skipStep
+      frame_skip_step: skipStep,
+      blur_enabled: isBlur
     };
 
     const res = await fetch("/api/text-message/save", {
@@ -2877,6 +2926,10 @@ function setupTextMessageStudio() {
           frameSkipCheckbox.checked = !!c.frame_skip_enabled;
           state.scrolling.frameSkip = !!c.frame_skip_enabled;
         }
+        if (blurCheckbox) {
+          blurCheckbox.checked = !!c.blur_enabled;
+          state.scrolling.blur = !!c.blur_enabled;
+        }
         if (frameSkipStepInput) {
           const stepVal = c.frame_skip_step || 1;
           frameSkipStepInput.value = stepVal;
@@ -2919,6 +2972,9 @@ function setupTextMessageStudio() {
       loadSavedConfigsList();
     }
   });
+
+  // Make fetchRenderedPreview available globally for state restoration
+  window.fetchRenderedPreview = fetchRenderedPreview;
 
   loadSavedConfigsList();
   refreshImageTagDropdown();
@@ -3172,7 +3228,11 @@ window.addEventListener("DOMContentLoaded", () => {
   try { setupSettingsControls(); } catch (e) { console.error("setupSettingsControls error:", e); }
   try { connectMatrixSyncWebSocket(); } catch (e) { console.error("connectMatrixSyncWebSocket error:", e); }
 
-  fetchConfig();
+  fetchConfig().then(() => {
+    if (typeof window.fetchRenderedPreview === "function") {
+      window.fetchRenderedPreview();
+    }
+  });
   fetchStatus();
   setInterval(fetchStatus, 4000);
 });

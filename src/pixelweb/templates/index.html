@@ -403,16 +403,22 @@
 
               <!-- Horizontal Scrolling Controls -->
               <div class="p-2.5 bg-white rounded-subtle border border-slate-200 space-y-2">
-                <!-- Line 1: Enable Scrolling + Frame skip checkbox -->
+                <!-- Line 1: Enable Scrolling + Frame skip checkbox + Blur checkbox -->
                 <div class="flex items-center justify-between">
                   <label class="text-[11px] font-bold text-slate-700 uppercase flex items-center gap-1.5">
                     <input type="checkbox" id="msg-scroll-enabled" class="w-4 h-4 accent-pink-600 cursor-pointer">
                     Enable Scrolling
                   </label>
-                  <label id="container-frame-skip-toggle" class="hidden text-[11px] font-bold text-slate-700 uppercase flex items-center gap-1.5">
-                    <input type="checkbox" id="msg-frame-skip-enabled" class="w-4 h-4 accent-pink-600 cursor-pointer">
-                    Frame skip
-                  </label>
+                  <div class="flex items-center gap-3">
+                    <label id="container-frame-skip-toggle" class="hidden text-[11px] font-bold text-slate-700 uppercase flex items-center gap-1.5">
+                      <input type="checkbox" id="msg-frame-skip-enabled" class="w-4 h-4 accent-pink-600 cursor-pointer">
+                      Frame skip
+                    </label>
+                    <label id="container-blur-toggle" class="hidden text-[11px] font-bold text-slate-700 uppercase flex items-center gap-1.5">
+                      <input type="checkbox" id="msg-blur-enabled" class="w-4 h-4 accent-pink-600 cursor-pointer">
+                      Blur
+                    </label>
+                  </div>
                 </div>
 
                 <!-- Line 2: Mutually exclusive SPEED: []ms or FRAMESKIP: []frames -->
@@ -1038,7 +1044,7 @@
   </div>
 
   <!-- Client Application Script -->
-  <script src="/static/app.js?v=1.0.21"></script>
+  <script src="/static/app.js?v=1.0.25"></script>
 </body>
 
 </html>

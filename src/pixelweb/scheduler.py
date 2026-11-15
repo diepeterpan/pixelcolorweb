@@ -13,6 +13,73 @@ from .text_message_renderer import render_text_message, get_text_message_config
 
 logger = logging.getLogger("Scheduler")
 
+def apply_motion_blur(canvas: Image.Image, direction: str, skip_step: int, bg_color: str) -> Image.Image:
+    """
+    Apply directional motion blur / phosphor decay trailing to rendered scrolling canvas.
+    - RTL: motion is leftwards, trailing is to the right (+x)
+    - LTR: motion is rightwards, trailing is to the left (-x)
+    - Decay: 45%, 30%, 15% scaled to skip_step. Subtle decay (max 15%) in 1px letter gaps.
+    """
+    if skip_step <= 1:
+        return canvas
+
+    blurred = canvas.copy()
+    w, h = canvas.size
+    bg_hex = (bg_color or "#000000").lstrip("#")
+    if len(bg_hex) == 6:
+        bg_rgb = tuple(int(bg_hex[i:i+2], 16) for i in (0, 2, 4))
+    else:
+        bg_rgb = (0, 0, 0)
+
+    if skip_step == 2:
+        decay_percentages = [0.35, 0.18]
+    elif skip_step == 3:
+        decay_percentages = [0.55, 0.35, 0.18]
+    elif skip_step == 4:
+        decay_percentages = [0.70, 0.50, 0.32, 0.18]
+    else:
+        decay_percentages = [0.80, 0.60, 0.42, 0.28, 0.16]
+
+    step_dx = 1 if direction == "rtl" else -1
+    pixels_orig = canvas.load()
+    pixels_out = blurred.load()
+
+    def is_bg(rgb):
+        return abs(rgb[0] - bg_rgb[0]) < 10 and abs(rgb[1] - bg_rgb[1]) < 10 and abs(rgb[2] - bg_rgb[2]) < 10
+
+    for y in range(h):
+        for x in range(w):
+            c_orig = pixels_orig[x, y]
+            if is_bg(c_orig):
+                continue
+
+            for t_idx, pct in enumerate(decay_percentages):
+                tx = x + step_dx * (t_idx + 1)
+                if tx < 0 or tx >= w:
+                    break
+                if not is_bg(pixels_orig[tx, y]):
+                    break
+
+                # Subtle decay in 1px gaps between letters (capped at 25% for distinction)
+                next_x = tx + step_dx
+                if 0 <= next_x < w and not is_bg(pixels_orig[next_x, y]):
+                    pct = min(pct, 0.25)
+
+                trail_rgb = (
+                    int(round((1.0 - pct) * bg_rgb[0] + pct * c_orig[0])),
+                    int(round((1.0 - pct) * bg_rgb[1] + pct * c_orig[1])),
+                    int(round((1.0 - pct) * bg_rgb[2] + pct * c_orig[2])),
+                )
+                cur_out = pixels_out[tx, y]
+                pixels_out[tx, y] = (
+                    max(cur_out[0], trail_rgb[0]),
+                    max(cur_out[1], trail_rgb[1]),
+                    max(cur_out[2], trail_rgb[2])
+                )
+
+    return blurred
+
+
 class SchedulerService:
     def __init__(self):
         self.running: bool = False
@@ -74,9 +141,12 @@ class SchedulerService:
 
                 ble_cfg = cfg.get("ble", {})
                 png_mode = ble_cfg.get("png_mode", "rgb_raw")
+                frame_skip_on = bool(msg_cfg.get("frame_skip_enabled", False))
+                skip_val = int(msg_cfg.get("frame_skip_step", 1))
+                blur_on = bool(msg_cfg.get("blur_enabled", False))
 
                 # Generate a unique hash key for current text config to know if content changed
-                curr_key = f"{msg_cfg.get('text')}_{msg_cfg.get('font_id')}_{msg_cfg.get('font_size')}_{msg_cfg.get('text_color')}_{msg_cfg.get('bg_color')}_{msg_cfg.get('v_alignment')}_{msg_cfg.get('antialias')}_{msg_cfg.get('scroll_direction')}_{msg_cfg.get('scroll_speed')}_{png_mode}"
+                curr_key = f"{msg_cfg.get('text')}_{msg_cfg.get('font_id')}_{msg_cfg.get('font_size')}_{msg_cfg.get('text_color')}_{msg_cfg.get('bg_color')}_{msg_cfg.get('v_alignment')}_{msg_cfg.get('antialias')}_{msg_cfg.get('scroll_direction')}_{msg_cfg.get('scroll_speed')}_{frame_skip_on}_{skip_val}_{blur_on}_{png_mode}"
                 if curr_key != rendered_key:
                     rendered_key = curr_key
                     # Render full width canvas with blank spacing between loops (Option A)
@@ -104,13 +174,18 @@ class SchedulerService:
                     full_canvas.paste(base_img.convert("RGB"), (loop_unit_w * 2, 0))
                     canvas_w = loop_unit_w
 
+                    direction = msg_cfg.get("scroll_direction", "rtl")
+
+                    # Apply motion blur if enabled during frame skip
+                    if frame_skip_on and blur_on and skip_val > 1:
+                        full_canvas = apply_motion_blur(full_canvas, direction, skip_val, bg_col)
+
                     # Pre-render each 96x16 window using configured PNG encoding mode
                     pre_rendered_frames = []
                     for x in range(canvas_w):
                         slice_img = full_canvas.crop((x, 0, x + 96, 16)).convert("RGB")
                         pre_rendered_frames.append(encode_matrix_png(slice_img, png_mode=png_mode))
 
-                    direction = msg_cfg.get("scroll_direction", "rtl")
                     offset_x = 0 if direction == "rtl" else (canvas_w - 1)
                     last_step_time = asyncio.get_event_loop().time()
 

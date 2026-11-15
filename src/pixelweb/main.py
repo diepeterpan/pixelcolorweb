@@ -12,7 +12,7 @@ from .config_manager import config_manager
 from .script_runner import script_manager
 from .image_processor import image_manager, UPLOAD_DIR, encode_matrix_png
 from .ble_worker import ble_worker
-from .scheduler import scheduler_service
+from .scheduler import scheduler_service, apply_motion_blur
 from .text_message_renderer import (
     AVAILABLE_FONTS,
     render_text_message,
@@ -97,6 +97,7 @@ class TextMessageRenderPayload(BaseModel):
     scroll_speed: int = 80 # Milliseconds per pixel step (min 80)
     frame_skip_enabled: bool = False
     frame_skip_step: int = 1 # Number of pixels/frames to shift when frame skip is enabled
+    blur_enabled: bool = False # Motion blur / trailing phosphor decay
 
 @app.on_event("startup")
 async def on_startup():
@@ -426,15 +427,20 @@ async def preview_text_message(payload: TextMessageRenderPayload):
         v_alignment=payload.v_alignment,
         full_width=payload.scroll_enabled
     )
+    rgb_img = img.convert("RGB")
+
+    # Apply motion blur if enabled during frame skip for live simulator sync
+    if payload.scroll_enabled and payload.frame_skip_enabled and payload.blur_enabled and payload.frame_skip_step > 1:
+        rgb_img = apply_motion_blur(rgb_img, payload.scroll_direction, payload.frame_skip_step, payload.bg_color)
+
     buf = BytesIO()
-    img.save(buf, format="PNG")
+    rgb_img.save(buf, format="PNG")
     b64_data = base64.b64encode(buf.getvalue()).decode("utf-8")
     fits = content_w <= 96 or payload.scroll_enabled
 
     # Extract RGB raw pixel array for virtual simulator
     # If full_width, extract all columns so the frontend can animate smoothly
     pixels = []
-    rgb_img = img.convert("RGB")
     img_w, img_h = rgb_img.size
     for y in range(img_h):
         row = []
@@ -455,7 +461,8 @@ async def preview_text_message(payload: TextMessageRenderPayload):
         "scroll_direction": payload.scroll_direction,
         "scroll_speed": payload.scroll_speed,
         "frame_skip_enabled": payload.frame_skip_enabled,
-        "frame_skip_step": payload.frame_skip_step
+        "frame_skip_step": payload.frame_skip_step,
+        "blur_enabled": payload.blur_enabled
     }
 
 @app.post("/api/text-message/save")
@@ -493,6 +500,11 @@ async def send_text_message(payload: TextMessageRenderPayload):
     )
 
     rgb_img = img.convert("RGB")
+
+    # Apply motion blur if enabled during frame skip for live simulator sync
+    if payload.scroll_enabled and payload.frame_skip_enabled and payload.blur_enabled and payload.frame_skip_step > 1:
+        rgb_img = apply_motion_blur(rgb_img, payload.scroll_direction, payload.frame_skip_step, payload.bg_color)
+
     img_w, img_h = rgb_img.size
 
     # If scrolling is enabled, take the first 96x16 window slice to display initially
@@ -526,7 +538,8 @@ async def send_text_message(payload: TextMessageRenderPayload):
         "scroll_direction": payload.scroll_direction,
         "scroll_speed": payload.scroll_speed,
         "frame_skip_enabled": payload.frame_skip_enabled,
-        "frame_skip_step": payload.frame_skip_step
+        "frame_skip_step": payload.frame_skip_step,
+        "blur_enabled": payload.blur_enabled
     }
 
 # Scheduling Endpoints
