@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from .logger_config import setup_logging
 from .config_manager import config_manager
 from .script_runner import script_manager
-from .image_processor import image_manager, UPLOAD_DIR, TEMP_DIR
+from .image_processor import image_manager, UPLOAD_DIR
 from .ble_worker import ble_worker
 from .scheduler import scheduler_service
 from .text_message_renderer import (

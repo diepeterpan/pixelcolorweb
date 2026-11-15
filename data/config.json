@@ -24,7 +24,6 @@
     "save_slot": 0
   },
   "active_script_id": "rainbow_welcome",
-  "active_image": "data/temp/active_matrix_frame.png",
   "clock": {
     "style": 1,
     "show_date": true,

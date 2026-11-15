@@ -14,12 +14,10 @@ logger = logging.getLogger("TextMessageRenderer")
 FONTS_DIR = Path("data/fonts")
 TEXT_MESSAGES_DIR = Path("data/text_messages")
 UPLOAD_DIR = Path("data/uploads")
-TEMP_DIR = Path("data/temp")
 
 FONTS_DIR.mkdir(parents=True, exist_ok=True)
 TEXT_MESSAGES_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 AVAILABLE_FONTS = [
     {"id": "PressStart2P", "name": "Press Start 2P (Pixel Proportional)", "file": "PressStart2P.ttf", "default_size": 8},

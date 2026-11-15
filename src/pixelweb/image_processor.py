@@ -7,9 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from PIL import Image, ImageOps
 
 UPLOAD_DIR = Path("data/uploads")
-TEMP_DIR = Path("data/temp")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 class ImageManager:
     def __init__(self):
@@ -59,9 +57,6 @@ class ImageManager:
         p = UPLOAD_DIR / filename
         if p.exists():
             return p
-        t = TEMP_DIR / filename
-        if t.exists():
-            return t
         return None
 
     def delete_image(self, filename: str) -> bool:

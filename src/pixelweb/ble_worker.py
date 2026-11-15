@@ -191,8 +191,6 @@ class BLEWorker:
                 p = Path(img_file)
                 if not p.is_absolute():
                     p = Path("data/uploads") / img_file
-                    if not p.exists():
-                        p = Path("data/temp") / img_file
                 if p.exists():
                     await self.send_image(str(p))
 

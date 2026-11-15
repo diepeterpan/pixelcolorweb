@@ -8,7 +8,6 @@ from PIL import Image
 from .config_manager import config_manager
 from .script_runner import script_manager
 from .ble_worker import ble_worker
-from .image_processor import TEMP_DIR
 from .text_message_renderer import render_text_message, get_text_message_config
 
 logger = logging.getLogger("Scheduler")
