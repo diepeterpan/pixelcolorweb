@@ -78,7 +78,7 @@
     "bg_color": "#000000",
     "alignment": "center",
     "antialias": false,
-    "refresh_interval": 10,
+    "refresh_interval": 1,
     "v_alignment": "middle",
     "scroll_enabled": true,
     "scroll_direction": "rtl",

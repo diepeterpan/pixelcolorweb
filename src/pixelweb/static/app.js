@@ -228,13 +228,36 @@ async function fetchConfig() {
     state.config = data;
 
     // Sync UI elements safely with null-checks
+    const dashSummary = document.getElementById("dash-active-summary");
+    const dashDetail = document.getElementById("dash-active-detail");
+
+    if (data.mode === "text_message" && data.active_text_message) {
+      const atm = data.active_text_message;
+      if (dashSummary) dashSummary.textContent = atm.text || "Text Message";
+      if (dashDetail) {
+        const scrollDetail = atm.scroll_enabled ? `Scroll ${atm.scroll_direction?.toUpperCase() || 'RTL'} • ` : "Static • ";
+        dashDetail.textContent = `${scrollDetail}${atm.font_id || 'Font'} (${atm.font_size || 8}px)`;
+      }
+    } else if (data.mode === "text" && data.text) {
+      if (dashSummary) dashSummary.textContent = data.text.content || "HELLO MATRIX";
+      if (dashDetail) {
+        const animLabels = ["Static", "Scroll Left", "Scroll Right", "Curtain Open", "Curtain Close"];
+        const animName = animLabels[data.text.animation] || "Marquee";
+        dashDetail.textContent = `${animName} • Rainbow Mode ${data.text.rainbow_mode || 0}`;
+      }
+    } else if (data.mode === "image" && data.active_image) {
+      if (dashSummary) dashSummary.textContent = data.active_image;
+      if (dashDetail) dashDetail.textContent = "Image Display Mode";
+    } else if (data.mode === "clock") {
+      if (dashSummary) dashSummary.textContent = "Hardware Clock Mode";
+      if (dashDetail) dashDetail.textContent = data.clock?.format_24 ? "24-Hour Digital Clock" : "12-Hour Digital Clock";
+    }
+
     if (data.text) {
       const textInp = document.getElementById("text-input") || document.getElementById("msg-text-input");
       if (textInp) textInp.value = data.text.content || "";
       const textCol = document.getElementById("text-color") || document.getElementById("msg-text-color");
       if (textCol) textCol.value = data.text.color || "#FF007F";
-      const dashSummary = document.getElementById("dash-active-summary");
-      if (dashSummary) dashSummary.textContent = data.text.content || "HELLO MATRIX";
       state.preview.text = data.text.content;
       state.preview.color = data.text.color || "#FF007F";
       state.preview.rainbow = data.text.rainbow_mode === 1;
@@ -258,6 +281,18 @@ async function fetchConfig() {
       if (schedEnable) schedEnable.checked = !!data.schedule.enabled;
       const dashSched = document.getElementById("dash-schedule-status");
       if (dashSched) dashSched.textContent = data.schedule.enabled ? "Active" : "Disabled";
+      const dashSchedNext = document.getElementById("dash-schedule-next");
+      if (dashSchedNext) {
+        const slots = data.schedule.slots || [];
+        const timeCount = slots.filter(s => (s.schedule_mode || "time_window") === "time_window").length;
+        const seqCount = slots.filter(s => s.schedule_mode === "sequential").length;
+        dashSchedNext.removeAttribute("title");
+        if (slots.length === 0) {
+          dashSchedNext.textContent = "0 slots defined";
+        } else {
+          dashSchedNext.textContent = `${timeCount} time • ${seqCount} seq`;
+        }
+      }
       renderScheduleTable(data.schedule.slots || []);
     }
     if (data.min_scroll_speed) {
@@ -399,6 +434,42 @@ async function fetchStatus() {
       if (bleSignalEl) {
         bleSignalEl.textContent = "Offline";
         bleSignalEl.className = "font-mono text-slate-400";
+      }
+    }
+
+    // Update Dashboard Automation Status & Active Content from Live Telemetry
+    if (data.schedule) {
+      const dashSched = document.getElementById("dash-schedule-status");
+      const dashSchedNext = document.getElementById("dash-schedule-next");
+      if (dashSched) {
+        if (!data.schedule.enabled) {
+          dashSched.textContent = "Disabled";
+          dashSched.className = "text-sm font-bold text-slate-500 truncate";
+        } else {
+          dashSched.textContent = "Active";
+          dashSched.className = "text-sm font-bold text-emerald-600 truncate";
+        }
+      }
+      if (dashSchedNext) {
+        const timeCount = data.schedule.time_slots_count || 0;
+        const seqCount = data.schedule.seq_slots_count || 0;
+        const total = data.schedule.total_slots || 0;
+        dashSchedNext.removeAttribute("title");
+        if (total === 0) {
+          dashSchedNext.textContent = "0 slots defined";
+        } else {
+          dashSchedNext.textContent = `${timeCount} time • ${seqCount} seq`;
+        }
+
+        // Keep active content summary card in sync with whatever is currently playing
+        const dashActiveSummary = document.getElementById("dash-active-summary");
+        const dashActiveDetail = document.getElementById("dash-active-detail");
+        if (dashActiveSummary && data.schedule.active_slot_name) {
+          dashActiveSummary.textContent = data.schedule.active_slot_name;
+        }
+        if (dashActiveDetail && data.schedule.active_slot_name) {
+          dashActiveDetail.textContent = data.schedule.active_track === "time_window" ? "Scheduled Time Override" : "Scheduled Playlist Carousel";
+        }
       }
     }
 

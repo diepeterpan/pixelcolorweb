@@ -98,6 +98,24 @@ class SchedulerService:
         self._seq_started_at: float = 0.0
         self._active_track: Optional[str] = None  # "time_window" or "sequential"
         self._last_active_slot_id: Optional[str] = None
+        self._last_active_slot_name: Optional[str] = None
+
+    @property
+    def current_status(self) -> Dict[str, Any]:
+        cfg = config_manager.get().get("schedule", {})
+        enabled = bool(cfg.get("enabled", False))
+        slots = cfg.get("slots", [])
+        time_slots = [s for s in slots if (s.get("schedule_mode") or "time_window") == "time_window"]
+        seq_slots = [s for s in slots if s.get("schedule_mode") == "sequential"]
+        return {
+            "enabled": enabled,
+            "total_slots": len(slots),
+            "time_slots_count": len(time_slots),
+            "seq_slots_count": len(seq_slots),
+            "active_track": self._active_track,
+            "active_slot_id": self._last_active_slot_id,
+            "active_slot_name": self._last_active_slot_name,
+        }
 
     def register_sync_listener(self, callback: Callable[[Dict[str, Any]], Any]):
         self._sync_listeners.add(callback)
@@ -349,6 +367,7 @@ class SchedulerService:
                     if active_time_slot:
                         # Priority 1: Time Window Active
                         self._active_track = "time_window"
+                        self._last_active_slot_name = active_time_slot.get("name")
                         if active_time_slot.get("id") != self._last_active_slot_id:
                             self._last_active_slot_id = active_time_slot.get("id")
                             logger.info(f"Triggering time-window override slot: {active_time_slot.get('name')}")
@@ -366,6 +385,7 @@ class SchedulerService:
                                 self._seq_index = 0
 
                             current_seq_slot = seq_slots[self._seq_index]
+                            self._last_active_slot_name = current_seq_slot.get("name")
                             duration = max(2, int(current_seq_slot.get("duration_seconds", 10)))
 
                             # Advance if duration elapsed OR if resuming from override

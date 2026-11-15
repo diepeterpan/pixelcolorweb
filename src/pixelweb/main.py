@@ -130,6 +130,7 @@ async def update_config(updates: Dict[str, Any]):
 async def get_status():
     status = dict(ble_worker.last_status)
     status["scroll_metrics"] = scheduler_service.scroll_metrics
+    status["schedule"] = scheduler_service.current_status
     if "ble_info" in status and isinstance(status["ble_info"], dict):
         status["ble_info"]["chunk_size"] = ble_worker.effective_chunk_size
         status["ble_info"]["negotiated_mtu"] = ble_worker.negotiated_mtu
