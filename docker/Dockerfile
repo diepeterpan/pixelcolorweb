@@ -20,9 +20,12 @@ WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Copy application source
+# Copy application source and bundled fonts
 COPY src/ /app/src/
 COPY data/ /app/data/
+COPY data/fonts/ /app/bundled_fonts/
+COPY docker/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 8080
 
@@ -32,5 +35,6 @@ ENV PYTHONUNBUFFERED=1 \
     PORT=8080 \
     HOST=0.0.0.0
 
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["sh", "-c", "uvicorn src.pixelweb.main:app --host ${HOST:-0.0.0.0} --port ${PORT:-8080} --log-level ${LOG_LEVEL:-info}"]
 
