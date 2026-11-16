@@ -60,6 +60,17 @@
         "type": "text_message",
         "config_id": "custom_msg",
         "config_name": "Promo 1 (10s)"
+      },
+      {
+        "id": "slot_1794805363512",
+        "name": "Weather CT",
+        "schedule_mode": "sequential",
+        "start_time": null,
+        "end_time": null,
+        "duration_seconds": 30,
+        "type": "text_message",
+        "config_id": "weather_msg",
+        "config_name": "weather_msg (\"<weather_ct.py>\")"
       }
     ]
   },
@@ -70,22 +81,22 @@
   },
   "presets": [],
   "active_text_message": {
-    "name": "custom_msg",
-    "text": "\u23f0<default_clock.py>",
-    "font_id": "DejaVuSans",
+    "name": "weather_msg",
+    "text": "<weather_ct.py>",
+    "font_id": "PressStart2P",
     "font_size": 10,
     "text_color": "#ffffff",
     "bg_color": "#000000",
     "alignment": "center",
     "antialias": false,
-    "refresh_interval": 1,
-    "v_alignment": "middle",
+    "refresh_interval": 0,
+    "v_alignment": "bottom",
     "scroll_enabled": true,
     "scroll_direction": "rtl",
     "scroll_speed": 80,
-    "frame_skip_enabled": false,
+    "frame_skip_enabled": true,
     "frame_skip_step": 3,
     "blur_enabled": true,
-    "id": "custom_msg"
+    "id": "weather_msg"
   }
 }
