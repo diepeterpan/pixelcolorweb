@@ -1126,12 +1126,137 @@ function setupImageStudio() {
 }
 
 // Schedule Tables: Option A (Two Distinct Sections: Fixed Time Overrides & Sequential Playlist)
+// Selected slot IDs for batch operations
+const selectedSlots = {
+  time: new Set(),
+  seq: new Set()
+};
+
+function updateBulkActionBar(type) {
+  const set = selectedSlots[type];
+  const bar = document.getElementById(`bulk-actions-${type}`);
+  const countLabel = document.getElementById(`bulk-count-${type}`);
+  const selectAllCb = document.getElementById(`select-all-${type}`);
+
+  if (countLabel) countLabel.textContent = `${set.size} selected`;
+  if (bar) {
+    if (set.size > 0) {
+      bar.classList.remove("hidden");
+      bar.classList.add("flex");
+    } else {
+      bar.classList.add("hidden");
+      bar.classList.remove("flex");
+    }
+  }
+
+  // Update master select-all checkbox state
+  if (selectAllCb) {
+    const slots = state.config?.schedule?.slots || [];
+    const matching = slots.filter(s => type === "seq" ? s.schedule_mode === "sequential" : (s.schedule_mode || "time_window") === "time_window");
+    if (matching.length > 0 && matching.every(s => set.has(s.id))) {
+      selectAllCb.checked = true;
+      selectAllCb.indeterminate = false;
+    } else if (set.size > 0) {
+      selectAllCb.checked = false;
+      selectAllCb.indeterminate = true;
+    } else {
+      selectAllCb.checked = false;
+      selectAllCb.indeterminate = false;
+    }
+  }
+}
+
+window.toggleSlotSelection = function (type, slotId, checked) {
+  if (checked) {
+    selectedSlots[type].add(slotId);
+  } else {
+    selectedSlots[type].delete(slotId);
+  }
+  updateBulkActionBar(type);
+};
+
+window.toggleSelectAll = function (type, checked) {
+  const slots = state.config?.schedule?.slots || [];
+  const matching = slots.filter(s => type === "seq" ? s.schedule_mode === "sequential" : (s.schedule_mode || "time_window") === "time_window");
+  
+  matching.forEach(s => {
+    if (checked) {
+      selectedSlots[type].add(s.id);
+    } else {
+      selectedSlots[type].delete(s.id);
+    }
+  });
+
+  document.querySelectorAll(`.slot-select-cb-${type}`).forEach(cb => {
+    cb.checked = checked;
+  });
+
+  updateBulkActionBar(type);
+};
+
+window.toggleSlotEnabled = async function (slotId, enabled) {
+  try {
+    const res = await fetch(`/api/schedule/slot/${encodeURIComponent(slotId)}/toggle`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.slots) {
+        renderScheduleTable(data.slots);
+      }
+      await fetchConfig();
+    } else {
+      alert("Failed to toggle schedule slot state.");
+      await fetchConfig();
+    }
+  } catch (err) {
+    alert("Error toggling slot: " + err.message);
+  }
+};
+
+window.bulkToggleSlots = async function (type, enabled) {
+  const ids = Array.from(selectedSlots[type]);
+  if (!ids.length) return;
+
+  try {
+    const res = await fetch("/api/schedule/slots/toggle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slot_ids: ids, enabled })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      selectedSlots[type].clear();
+      updateBulkActionBar(type);
+      if (data && data.slots) {
+        renderScheduleTable(data.slots);
+      }
+      await fetchConfig();
+    } else {
+      alert("Failed to update selected slots.");
+    }
+  } catch (err) {
+    alert("Error during bulk toggle: " + err.message);
+  }
+};
+
 function renderScheduleTable(slots) {
   const timeBody = document.getElementById("schedule-timewindow-body");
   const seqBody = document.getElementById("schedule-sequential-body");
   if (!timeBody && !seqBody) return;
 
   const allSlots = slots || [];
+
+  // Prune any deleted slot IDs from selection sets
+  const validIds = new Set(allSlots.map(s => s.id));
+  ['time', 'seq'].forEach(t => {
+    selectedSlots[t].forEach(id => {
+      if (!validIds.has(id)) selectedSlots[t].delete(id);
+    });
+    updateBulkActionBar(t);
+  });
 
   // 1. Render Fixed Time Window Slots (sorted by start_time)
   if (timeBody) {
@@ -1140,17 +1265,28 @@ function renderScheduleTable(slots) {
     timeSlots.sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
 
     if (timeSlots.length === 0) {
-      timeBody.innerHTML = `<tr><td colspan="4" class="p-3 text-center text-slate-400 italic">No fixed time window slots configured.</td></tr>`;
+      timeBody.innerHTML = `<tr><td colspan="6" class="p-3 text-center text-slate-400 italic">No fixed time window slots configured.</td></tr>`;
     } else {
       timeSlots.forEach(s => {
         const slotId = s.id || "";
+        const isEnabled = s.enabled !== false;
+        const isSelected = selectedSlots.time.has(slotId);
         const tr = document.createElement("tr");
-        tr.className = "border-b border-slate-100 hover:bg-indigo-50/20 transition-colors";
+        tr.className = `border-b border-slate-100 hover:bg-indigo-50/20 transition-colors ${isEnabled ? '' : 'opacity-60 bg-slate-50/50'}`;
         const displayContent = s.config_name || s.config_id || s.content || '-';
         tr.innerHTML = `
-          <td class="p-2.5 font-semibold text-slate-800">${s.name || 'Slot'}</td>
+          <td class="p-2.5 text-center">
+            <input type="checkbox" class="slot-select-cb-time w-3.5 h-3.5 rounded cursor-pointer accent-indigo-600" ${isSelected ? 'checked' : ''} onchange="toggleSlotSelection('time', '${slotId}', this.checked)">
+          </td>
+          <td class="p-2.5 font-semibold text-slate-800 ${isEnabled ? '' : 'line-through text-slate-400'}">${s.name || 'Slot'}</td>
           <td class="p-2.5 font-mono text-indigo-700 font-bold">${s.start_time || '00:00'} - ${s.end_time || '00:00'}</td>
           <td class="p-2.5 font-mono truncate max-w-xs text-slate-700 font-medium">${displayContent}</td>
+          <td class="p-2.5 text-center">
+            <label class="inline-flex items-center cursor-pointer" title="${isEnabled ? 'Click to disable' : 'Click to enable'}">
+              <input type="checkbox" class="sr-only peer" ${isEnabled ? 'checked' : ''} onchange="toggleSlotEnabled('${slotId}', this.checked)">
+              <div class="relative w-8 h-4.5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-emerald-600"></div>
+            </label>
+          </td>
           <td class="p-2.5 text-right">
             <div class="inline-flex items-center gap-1.5">
               <button class="btn-3d btn-load text-xs py-1 px-2.5 rounded inline-flex items-center gap-1 font-semibold cursor-pointer" onclick="editSlot('${slotId}')">
@@ -1173,21 +1309,32 @@ function renderScheduleTable(slots) {
     const seqSlots = allSlots.filter(s => s.schedule_mode === "sequential");
 
     if (seqSlots.length === 0) {
-      seqBody.innerHTML = `<tr><td colspan="5" class="p-3 text-center text-slate-400 italic">No sequential playlist slots configured. Click "+ Add Slot" above and select Sequential mode.</td></tr>`;
+      seqBody.innerHTML = `<tr><td colspan="7" class="p-3 text-center text-slate-400 italic">No sequential playlist slots configured. Click "+ Add Slot" above and select Sequential mode.</td></tr>`;
     } else {
       seqSlots.forEach((s, idx) => {
         const slotId = s.id || "";
+        const isEnabled = s.enabled !== false;
+        const isSelected = selectedSlots.seq.has(slotId);
         const tr = document.createElement("tr");
-        tr.className = "border-b border-slate-100 hover:bg-amber-50/20 transition-colors";
+        tr.className = `border-b border-slate-100 hover:bg-amber-50/20 transition-colors ${isEnabled ? '' : 'opacity-60 bg-slate-50/50'}`;
         const displayContent = s.config_name || s.config_id || s.content || '-';
         const isFirst = idx === 0;
         const isLast = idx === seqSlots.length - 1;
 
         tr.innerHTML = `
+          <td class="p-2.5 text-center">
+            <input type="checkbox" class="slot-select-cb-seq w-3.5 h-3.5 rounded cursor-pointer accent-amber-600" ${isSelected ? 'checked' : ''} onchange="toggleSlotSelection('seq', '${slotId}', this.checked)">
+          </td>
           <td class="p-2.5 text-center font-mono font-bold text-slate-500">${idx + 1}</td>
-          <td class="p-2.5 font-semibold text-slate-800">${s.name || 'Slot'}</td>
+          <td class="p-2.5 font-semibold text-slate-800 ${isEnabled ? '' : 'line-through text-slate-400'}">${s.name || 'Slot'}</td>
           <td class="p-2.5 font-mono text-amber-700 font-bold">⏱ ${s.duration_seconds || 10}s</td>
           <td class="p-2.5 font-mono truncate max-w-xs text-slate-700 font-medium">${displayContent}</td>
+          <td class="p-2.5 text-center">
+            <label class="inline-flex items-center cursor-pointer" title="${isEnabled ? 'Click to disable' : 'Click to enable'}">
+              <input type="checkbox" class="sr-only peer" ${isEnabled ? 'checked' : ''} onchange="toggleSlotEnabled('${slotId}', this.checked)">
+              <div class="relative w-8 h-4.5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-emerald-600"></div>
+            </label>
+          </td>
           <td class="p-2.5 text-right">
             <div class="inline-flex items-center gap-1.5">
               <button class="btn-3d bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs py-1 px-2 rounded font-semibold cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed" 
@@ -1344,7 +1491,11 @@ function setupScheduleControls() {
     if (editIdInput) editIdInput.value = "";
   };
 
-  if (btnToggleDrawer) btnToggleDrawer.addEventListener("click", () => openDrawer(false));
+  if (btnToggleDrawer) btnToggleDrawer.addEventListener("click", () => {
+    const slotEnabledCb = document.getElementById("slot-enabled");
+    if (slotEnabledCb) slotEnabledCb.checked = true;
+    openDrawer(false);
+  });
   if (btnCloseDrawer) btnCloseDrawer.addEventListener("click", closeDrawer);
   if (btnCancelSlot) btnCancelSlot.addEventListener("click", closeDrawer);
 
@@ -1362,6 +1513,9 @@ function setupScheduleControls() {
     const isSeq = slot.schedule_mode === "sequential";
     if (modeSeqRadio) modeSeqRadio.checked = isSeq;
     if (modeTimeRadio) modeTimeRadio.checked = !isSeq;
+
+    const slotEnabledCb = document.getElementById("slot-enabled");
+    if (slotEnabledCb) slotEnabledCb.checked = slot.enabled !== false;
 
     document.getElementById("slot-start").value = slot.start_time || "08:00";
     document.getElementById("slot-end").value = slot.end_time || "12:00";
@@ -1388,6 +1542,8 @@ function setupScheduleControls() {
       const config_id = select ? select.value : "";
       const selectedText = select && select.selectedOptions.length ? select.selectedOptions[0].textContent : config_id;
       const existingId = editIdInput ? editIdInput.value : "";
+      const slotEnabledCb = document.getElementById("slot-enabled");
+      const enabled = slotEnabledCb ? slotEnabledCb.checked : true;
 
       if (!config_id) {
         alert("Please select a saved Text Message configuration for this slot.");
@@ -1402,6 +1558,7 @@ function setupScheduleControls() {
       const slot = {
         id: existingId || ("slot_" + Date.now()),
         name,
+        enabled,
         schedule_mode,
         start_time: isSeq ? null : start_time,
         end_time: isSeq ? null : end_time,

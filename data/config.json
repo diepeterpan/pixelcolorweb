@@ -41,7 +41,8 @@
         "end_time": "12:00",
         "type": "text_message",
         "config_id": "custom_msg",
-        "config_name": "Morning Notice"
+        "config_name": "Morning Notice",
+        "enabled": true
       },
       {
         "id": "slot_seq_2",
@@ -50,7 +51,8 @@
         "duration_seconds": 15,
         "type": "text_message",
         "config_id": "custom_msg",
-        "config_name": "Promo 2 (15s)"
+        "config_name": "Promo 2 (15s)",
+        "enabled": true
       },
       {
         "id": "slot_seq_1",
@@ -59,7 +61,8 @@
         "duration_seconds": 10,
         "type": "text_message",
         "config_id": "custom_msg",
-        "config_name": "Promo 1 (10s)"
+        "config_name": "Promo 1 (10s)",
+        "enabled": true
       },
       {
         "id": "slot_1794805363512",

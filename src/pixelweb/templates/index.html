@@ -879,15 +879,21 @@
             </div>
 
             <!-- Mode Selector: Time Window vs Sequential Duration -->
-            <div class="mb-3 p-2 bg-white rounded border border-slate-200 flex flex-wrap items-center gap-4 text-xs font-semibold">
-              <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Schedule Mode:</span>
-              <label class="flex items-center gap-1.5 cursor-pointer text-indigo-700 font-bold">
-                <input type="radio" name="slot-schedule-mode" id="slot-mode-time" value="time_window" checked class="accent-indigo-600">
-                Time Window (Start & End Time Override)
-              </label>
-              <label class="flex items-center gap-1.5 cursor-pointer text-amber-700 font-bold">
-                <input type="radio" name="slot-schedule-mode" id="slot-mode-seq" value="sequential" class="accent-amber-600">
-                Sequential Duration (Playlist Carousel)
+            <div class="mb-3 p-2 bg-white rounded border border-slate-200 flex flex-wrap items-center justify-between gap-4 text-xs font-semibold">
+              <div class="flex flex-wrap items-center gap-4">
+                <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Schedule Mode:</span>
+                <label class="flex items-center gap-1.5 cursor-pointer text-indigo-700 font-bold">
+                  <input type="radio" name="slot-schedule-mode" id="slot-mode-time" value="time_window" checked class="accent-indigo-600">
+                  Time Window (Start & End Time Override)
+                </label>
+                <label class="flex items-center gap-1.5 cursor-pointer text-amber-700 font-bold">
+                  <input type="radio" name="slot-schedule-mode" id="slot-mode-seq" value="sequential" class="accent-amber-600">
+                  Sequential Duration (Playlist Carousel)
+                </label>
+              </div>
+              <label class="flex items-center gap-1.5 cursor-pointer text-slate-700 font-bold">
+                <input type="checkbox" id="slot-enabled" checked class="w-4 h-4 accent-emerald-600 rounded">
+                <span>Enabled</span>
               </label>
             </div>
 
@@ -937,19 +943,34 @@
 
           <!-- Section 1: Fixed Time Slots (Overrides) -->
           <div class="space-y-2 mb-6">
-            <div class="flex items-center justify-between">
-              <h3 class="text-xs font-bold text-indigo-800 uppercase tracking-wider flex items-center gap-1.5">
-                <i data-lucide="clock" class="w-4 h-4 text-indigo-600"></i> Fixed Time Slots (Overrides)
-              </h3>
-              <span class="text-[11px] text-slate-500">Takes absolute priority during configured hours</span>
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="flex items-center gap-2">
+                <h3 class="text-xs font-bold text-indigo-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <i data-lucide="clock" class="w-4 h-4 text-indigo-600"></i> Fixed Time Slots (Overrides)
+                </h3>
+                <span class="text-[11px] text-slate-500 hidden sm:inline">Takes absolute priority during configured hours</span>
+              </div>
+              <div id="bulk-actions-time" class="hidden items-center gap-2">
+                <span id="bulk-count-time" class="text-xs font-medium text-slate-600">0 selected</span>
+                <button type="button" onclick="bulkToggleSlots('time', true)" class="btn-3d bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 text-[11px] py-1 px-2.5 rounded font-semibold cursor-pointer">
+                  Enable
+                </button>
+                <button type="button" onclick="bulkToggleSlots('time', false)" class="btn-3d bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 text-[11px] py-1 px-2.5 rounded font-semibold cursor-pointer">
+                  Disable
+                </button>
+              </div>
             </div>
             <div class="border border-slate-200 rounded-subtle overflow-x-auto bg-white">
               <table class="w-full text-left text-xs text-slate-600">
                 <thead class="bg-indigo-50/50 font-bold text-slate-700 border-b border-slate-200">
                   <tr>
+                    <th class="p-2.5 w-8 text-center">
+                      <input type="checkbox" id="select-all-time" onchange="toggleSelectAll('time', this.checked)" class="w-3.5 h-3.5 rounded cursor-pointer accent-indigo-600" title="Select all time slots">
+                    </th>
                     <th class="p-2.5">Slot Name</th>
                     <th class="p-2.5">Time Range</th>
                     <th class="p-2.5">Content / Message</th>
+                    <th class="p-2.5 text-center w-20">Status</th>
                     <th class="p-2.5 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -962,20 +983,35 @@
 
           <!-- Section 2: Sequential Playlist (Reorderable Carousel) -->
           <div class="space-y-2">
-            <div class="flex items-center justify-between">
-              <h3 class="text-xs font-bold text-amber-800 uppercase tracking-wider flex items-center gap-1.5">
-                <i data-lucide="play-circle" class="w-4 h-4 text-amber-600"></i> Sequential Playlist (Reorderable)
-              </h3>
-              <span class="text-[11px] text-slate-500">Plays sequentially when no fixed time slot is active</span>
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="flex items-center gap-2">
+                <h3 class="text-xs font-bold text-amber-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <i data-lucide="play-circle" class="w-4 h-4 text-amber-600"></i> Sequential Playlist (Reorderable)
+                </h3>
+                <span class="text-[11px] text-slate-500 hidden sm:inline">Plays sequentially when no fixed time slot is active</span>
+              </div>
+              <div id="bulk-actions-seq" class="hidden items-center gap-2">
+                <span id="bulk-count-seq" class="text-xs font-medium text-slate-600">0 selected</span>
+                <button type="button" onclick="bulkToggleSlots('seq', true)" class="btn-3d bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 text-[11px] py-1 px-2.5 rounded font-semibold cursor-pointer">
+                  Enable
+                </button>
+                <button type="button" onclick="bulkToggleSlots('seq', false)" class="btn-3d bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 text-[11px] py-1 px-2.5 rounded font-semibold cursor-pointer">
+                  Disable
+                </button>
+              </div>
             </div>
             <div class="border border-slate-200 rounded-subtle overflow-x-auto bg-white">
               <table class="w-full text-left text-xs text-slate-600">
                 <thead class="bg-amber-50/50 font-bold text-slate-700 border-b border-slate-200">
                   <tr>
+                    <th class="p-2.5 w-8 text-center">
+                      <input type="checkbox" id="select-all-seq" onchange="toggleSelectAll('seq', this.checked)" class="w-3.5 h-3.5 rounded cursor-pointer accent-amber-600" title="Select all sequential slots">
+                    </th>
                     <th class="p-2.5 w-12 text-center">Order</th>
                     <th class="p-2.5">Slot Name</th>
                     <th class="p-2.5">Duration</th>
                     <th class="p-2.5">Content / Message</th>
+                    <th class="p-2.5 text-center w-20">Status</th>
                     <th class="p-2.5 text-right">Actions</th>
                   </tr>
                 </thead>

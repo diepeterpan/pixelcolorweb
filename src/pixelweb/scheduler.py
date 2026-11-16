@@ -107,11 +107,15 @@ class SchedulerService:
         slots = cfg.get("slots", [])
         time_slots = [s for s in slots if (s.get("schedule_mode") or "time_window") == "time_window"]
         seq_slots = [s for s in slots if s.get("schedule_mode") == "sequential"]
+        enabled_time_slots = [s for s in time_slots if s.get("enabled", True)]
+        enabled_seq_slots = [s for s in seq_slots if s.get("enabled", True)]
         return {
             "enabled": enabled,
             "total_slots": len(slots),
             "time_slots_count": len(time_slots),
             "seq_slots_count": len(seq_slots),
+            "enabled_time_slots_count": len(enabled_time_slots),
+            "enabled_seq_slots_count": len(enabled_seq_slots),
             "active_track": self._active_track,
             "active_slot_id": self._last_active_slot_id,
             "active_slot_name": self._last_active_slot_name,
@@ -344,6 +348,10 @@ class SchedulerService:
                     # Phase 1: Check for active Time-Window Override slots
                     active_time_slot = None
                     for slot in slots:
+                        # Check enabled status (defaults to True)
+                        if not slot.get("enabled", True):
+                            continue
+
                         # Time-window is default if mode not specified
                         mode_s = slot.get("schedule_mode", "time_window")
                         if mode_s != "time_window":
@@ -374,7 +382,7 @@ class SchedulerService:
                             await self._execute_slot(active_time_slot)
                     else:
                         # Phase 2: No active time-window override -> Run sequential duration playlist
-                        seq_slots = [s for s in slots if s.get("schedule_mode") == "sequential"]
+                        seq_slots = [s for s in slots if s.get("schedule_mode") == "sequential" and s.get("enabled", True)]
                         if seq_slots:
                             # If we just reverted from time-window or sequential timer expired
                             reverted_from_override = (self._active_track == "time_window")

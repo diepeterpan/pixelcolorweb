@@ -570,6 +570,50 @@ async def add_or_update_schedule_slot(slot: Dict[str, Any]):
     config_manager.update({"schedule": {"slots": slots}})
     return {"success": True, "slots": slots, "updated": updated}
 
+@app.post("/api/schedule/slot/{slot_id}/toggle")
+async def toggle_schedule_slot(slot_id: str, enabled: Optional[bool] = None, payload: Optional[Dict[str, Any]] = None):
+    cfg = config_manager.get()
+    slots = cfg.get("schedule", {}).get("slots", [])
+    
+    # Determine target enabled status
+    target_state = enabled
+    if target_state is None and payload is not None:
+        target_state = payload.get("enabled")
+
+    found = False
+    for slot in slots:
+        if str(slot.get("id")) == str(slot_id):
+            if target_state is None:
+                # Toggle if not explicitly provided
+                slot["enabled"] = not slot.get("enabled", True)
+            else:
+                slot["enabled"] = bool(target_state)
+            found = True
+            break
+
+    if not found:
+        raise HTTPException(status_code=404, detail=f"Slot '{slot_id}' not found")
+
+    config_manager.update({"schedule": {"slots": slots}})
+    return {"success": True, "slots": slots}
+
+@app.post("/api/schedule/slots/toggle")
+async def toggle_multiple_schedule_slots(payload: Dict[str, Any]):
+    slot_ids = set(payload.get("slot_ids", []))
+    enabled = payload.get("enabled")
+    if enabled is None:
+        raise HTTPException(status_code=400, detail="'enabled' boolean is required in request payload")
+
+    cfg = config_manager.get()
+    slots = cfg.get("schedule", {}).get("slots", [])
+
+    for slot in slots:
+        if slot.get("id") in slot_ids:
+            slot["enabled"] = bool(enabled)
+
+    config_manager.update({"schedule": {"slots": slots}})
+    return {"success": True, "slots": slots}
+
 @app.delete("/api/schedule/slot/{slot_id}")
 async def delete_schedule_slot(slot_id: str):
     cfg = config_manager.get()
