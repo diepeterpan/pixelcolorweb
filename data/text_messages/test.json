@@ -1,0 +1,20 @@
+{
+  "name": "test",
+  "text": "<rocker.py>\ud83d\ude80",
+  "font_id": "DejaVuSans",
+  "font_size": 10,
+  "text_color": "#ffffff",
+  "bg_color": "#000000",
+  "alignment": "center",
+  "antialias": false,
+  "v_alignment": "middle",
+  "refresh_interval": 0,
+  "page_duration": 3,
+  "scroll_enabled": false,
+  "scroll_direction": "rtl",
+  "scroll_speed": 30,
+  "frame_skip_enabled": false,
+  "frame_skip_step": 1,
+  "blur_enabled": false,
+  "id": "test"
+}

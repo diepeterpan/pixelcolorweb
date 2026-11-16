@@ -28,6 +28,10 @@ A modern, responsive, 3D tactile Web UI and background automation service for co
 
 - **Dedicated "Text message" Studio (Proportional PIL & Color Emojis):**
   - Renders mixed text, full-color emojis, and inline images pixel-perfectly into 96x16 frames.
+  - **Multi-line Text & Page Break Handling (Static vs. Scrolling):**
+    - **Static Mode (`scroll_enabled` off):** Text containing CR (`\r`), LF (`\n`), CRLF (`\r\n`), or LFCR (`\n\r`) is split into clean segments without blank gaps. Each segment displays sequentially for a user-configurable duration between **1s and 10s** (`page_duration`), automatically cycling continuously.
+    - **Scrolling Mode (`scroll_enabled` on):** Any CR / LF / CRLF / LFCR sequences are cleanly replaced with a single space, allowing seamless, continuous horizontal banner scrolling.
+    - **Embedded Script Multi-line Support:** Dynamic output from `<script.py>` containing line breaks is also automatically expanded and split into timed pages in static mode.
   - **Dynamic Software Scrolling Engine:**
     - Bi-directional scrolling (**Scroll Left** and **Scroll Right**).
     - Configurable scroll intervals down to 10ms with zero artificial locks.
@@ -47,6 +51,11 @@ A modern, responsive, 3D tactile Web UI and background automation service for co
   - **Dual Playback Modes:**
     1. **Time-Window Overrides:** Schedule slots active during specified time ranges (`HH:MM` start and end times). Automatically take highest priority and override sequential playback.
     2. **Sequential Playback Playlist (Carousel):** Operates on a defined duration (in seconds) for each slot whenever no fixed time-window slot is active.
+  - **Slot-Level Enable / Disable & Batch Management:**
+    - Inline toggle switch on each schedule slot (both Time Window and Sequential tables) to quickly enable or disable individual slots without deleting them.
+    - Multi-select row checkboxes and a master header checkbox for bulk operations.
+    - Contextual bulk action toolbar providing one-click **`[Enable]`** and **`[Disable]`** for all selected slots.
+    - Muted visual styling and struck-through text for disabled slots.
   - **Reorderable Sequential Carousel:** Full up/down reordering controls for sequential items.
   - **Automatic Fallback & Resume:** Seamlessly reverts back to the sequential playlist when a time-window slot completes, resuming where it left off.
   - Two distinct management tables in the Schedule tab for clear overview and editing.
@@ -152,11 +161,13 @@ You can configure these variables in `docker/docker-compose.yml`:
    - Open **Text message**.
    - Type your text, click emojis from the palette (e.g. from the **`🎄 Christmas`** or **`🍌 Food`** tabs), or type in the search bar to locate specific emojis.
    - Tag uploaded images via the `<image.png>` selector or scripts via `<script.py>`.
+   - Press `Enter` to create multi-page static messages (each page displays for 1–10 seconds configured under **Page Duration**), or check **Enable Scrolling** to automatically replace line breaks with spaces and scroll as a banner.
    - Adjust typography (font, alignment, color, size), check the width badge, enable scrolling/motion blur if desired, and click **`[Send to Matrix]`**.
 3. **Automating with Schedules:**
    - Go to **Schedule & Timeline**.
    - Toggle **Enable Schedule** and click **`[Add Slot]`**.
    - Choose between **Fixed Time Window** (`HH:MM` start/end) or **Sequential Playlist** (duration in seconds).
+   - Enable or disable specific slots on demand using the inline toggle switches or multi-select batch action toolbar.
    - Reorder sequential items using the **Up** / **Down** buttons to set playback order.
 4. **Brightness & Hardware Controls:**
    - Adjust matrix brightness directly from the persistent header slider.
