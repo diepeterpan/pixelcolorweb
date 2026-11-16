@@ -38,6 +38,7 @@ A modern, responsive, 3D tactile Web UI and background automation service for co
     - Categorized palettes for **Food (🍌, 🍆, 🥑)**, **Smileys**, **Nature (🐶, 🌲)**, **Cool (🔥, 🚀)**, **Objects**, and **Symbols**.
     - **Real-Time Word & Keyword Search:** Search through hundreds of emojis by name or descriptive keywords.
   - **Inline Image & Script Tags:** Embed custom icons and graphics using `<filename.png>` or live script output using `<script.py>` directly in the text message composer.
+  - **Embedded Script Emoji Rendering:** Script outputs (such as live weather routines returning temperature and weather conditions) automatically parse embedded Unicode and emoji escape sequences into full-color Twemoji graphics rather than falling back to monochrome font missing-glyph boxes.
   - Multiple proportional pixel fonts (`Press Start 2P`, `Silkscreen`, `DejaVu Sans`, `VT323`, `Unifont`) with font size selection and text/background color pickers.
   - Horizontal alignment (**Left**, **Center**, **Right**) and Vertical alignment (**Top**, **Middle**, **Bottom**).
   - Toggleable anti-aliasing and live content width meter (`Width: X / 96 px`).
@@ -68,6 +69,8 @@ A modern, responsive, 3D tactile Web UI and background automation service for co
 
 - **Settings & Persistent State:**
   - Persistent brightness, orientation, power state, and paired BLE hardware addresses saved across reboots in `data/config.json`.
+  - **In-Memory Active Dispatch & Wear Prevention:** Ephemeral active text message playback and scheduler transitions operate strictly in-memory (`persist=False`), preventing continuous disk writes and flash storage wear.
+  - **Graceful Startup Display:** Automatic fallback to configured default text or the active schedule playlist on matrix connection.
   - Automatic hardware re-synchronization on BLE reconnect.
 
 ---
