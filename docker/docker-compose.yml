@@ -15,4 +15,13 @@ services:
       - ../data:/app/data
     environment:
       - PYTHONUNBUFFERED=1
+      # Timezone for timeline scheduler and dynamic time scripts (e.g. Africa/Johannesburg, Europe/London, America/New_York)
+      - TZ=Africa/Johannesburg
+      # Logging verbosity: DEBUG, INFO, WARNING, ERROR
+      - LOG_LEVEL=INFO
+      # Web server port and listening interface
+      - PORT=8080
+      - HOST=0.0.0.0
+      # BLE Device auto-reconnect fallback address (optional override)
+      # - BLE_DEVICE_ADDRESS=31:6C:93:E6:5D:12
 

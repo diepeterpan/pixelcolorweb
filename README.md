@@ -127,7 +127,19 @@ To start with debug logging:
    cd docker
    docker compose up --build -d
    ```
-3. Access the web interface at `http://localhost:8080` (or configured host port).
+3. Access the web interface at `http://localhost:8080`.
+
+#### Useful Docker Environment Variables
+
+You can configure these variables in `docker/docker-compose.yml`:
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `TZ` | `Africa/Johannesburg` | Host timezone for schedule time-windows, clocks, and dynamic Python scripts. |
+| `LOG_LEVEL` | `INFO` | Logging level verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
+| `PORT` | `8080` | Web server port. |
+| `HOST` | `0.0.0.0` | Listening network interface address. |
+| `PYTHONUNBUFFERED`| `1` | Ensures standard output and errors are immediately flushed to `docker compose logs`. |
 
 ---
 

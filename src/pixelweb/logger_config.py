@@ -19,16 +19,26 @@ class EndpointFilter(logging.Filter):
         return True
 
 def setup_logging():
+    # Support both LOG_LEVEL (DEBUG, INFO, WARNING, ERROR) and legacy DEBUG=1
+    log_level_env = os.getenv("LOG_LEVEL", "").strip().upper()
     debug_mode = os.getenv("DEBUG", "").lower() in ("1", "true", "yes", "on")
 
-    # Base logging level
-    root_level = logging.DEBUG if debug_mode else logging.INFO
+    if log_level_env in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+        root_level = getattr(logging, log_level_env)
+        is_debug = root_level == logging.DEBUG
+    elif debug_mode:
+        root_level = logging.DEBUG
+        is_debug = True
+    else:
+        root_level = logging.INFO
+        is_debug = False
+
     logging.basicConfig(
         level=root_level,
         format="%(levelname)s:%(name)s:%(message)s"
     )
 
-    if debug_mode:
+    if is_debug:
         logging.getLogger("pypixelcolor").setLevel(logging.DEBUG)
         logging.getLogger("pypixelcolor.commands.send_image").setLevel(logging.DEBUG)
         logging.getLogger("pypixelcolor.client").setLevel(logging.DEBUG)
