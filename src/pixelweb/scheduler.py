@@ -9,7 +9,12 @@ from .config_manager import config_manager
 from .script_runner import script_manager
 from .ble_worker import ble_worker
 from .image_processor import encode_matrix_png
-from .text_message_renderer import render_text_message, get_text_message_config
+from .text_message_renderer import (
+    render_text_message,
+    get_text_message_config,
+    split_text_pages,
+    clean_scrolling_text
+)
 
 logger = logging.getLogger("Scheduler")
 
@@ -96,6 +101,9 @@ class SchedulerService:
         }
         self._seq_index: int = 0
         self._seq_started_at: float = 0.0
+        self._static_page_index: int = 0
+        self._static_page_started_at: float = 0.0
+        self._static_active_msg_id: Optional[str] = None
         self._active_track: Optional[str] = None  # "time_window" or "sequential"
         self._last_active_slot_id: Optional[str] = None
         self._last_active_slot_name: Optional[str] = None
@@ -171,13 +179,16 @@ class SchedulerService:
                 skip_val = int(msg_cfg.get("frame_skip_step", 1))
                 blur_on = bool(msg_cfg.get("blur_enabled", False))
 
+                # Clean text of CR/LF to single space for continuous scrolling
+                scroll_text = clean_scrolling_text(msg_cfg.get("text", ""))
+
                 # Generate a unique hash key for current text config to know if content changed
-                curr_key = f"{msg_cfg.get('text')}_{msg_cfg.get('font_id')}_{msg_cfg.get('font_size')}_{msg_cfg.get('text_color')}_{msg_cfg.get('bg_color')}_{msg_cfg.get('v_alignment')}_{msg_cfg.get('antialias')}_{msg_cfg.get('scroll_direction')}_{msg_cfg.get('scroll_speed')}_{frame_skip_on}_{skip_val}_{blur_on}_{png_mode}"
+                curr_key = f"{scroll_text}_{msg_cfg.get('font_id')}_{msg_cfg.get('font_size')}_{msg_cfg.get('text_color')}_{msg_cfg.get('bg_color')}_{msg_cfg.get('v_alignment')}_{msg_cfg.get('antialias')}_{msg_cfg.get('scroll_direction')}_{msg_cfg.get('scroll_speed')}_{frame_skip_on}_{skip_val}_{blur_on}_{png_mode}"
                 if curr_key != rendered_key:
                     rendered_key = curr_key
                     # Render full width canvas with blank spacing between loops (Option A)
                     base_img, content_w = render_text_message(
-                        text=msg_cfg.get("text", ""),
+                        text=scroll_text,
                         width=96,
                         height=16,
                         font_id=msg_cfg.get("font_id", "PressStart2P"),
@@ -288,16 +299,45 @@ class SchedulerService:
                 sched_cfg = cfg.get("schedule", {})
                 mode = cfg.get("mode")
 
-                # Dynamic text_message refresh loop (when refresh_interval > 0 and not scrolling)
+                # Dynamic text_message static paging & refresh loop (when not scrolling)
                 if mode == "text_message" and ble_worker.connected:
                     msg_cfg = cfg.get("active_text_message")
                     if msg_cfg and not msg_cfg.get("scroll_enabled"):
-                        interval = int(msg_cfg.get("refresh_interval", 0))
+                        raw_text = msg_cfg.get("text", "")
+                        pages = split_text_pages(raw_text)
+                        num_pages = len(pages)
+                        page_dur = max(1, min(10, int(msg_cfg.get("page_duration", 3))))
+                        refresh_int = int(msg_cfg.get("refresh_interval", 0))
+
+                        msg_id = f"{msg_cfg.get('name')}_{raw_text}_{msg_cfg.get('font_id')}_{msg_cfg.get('font_size')}"
+                        if self._static_active_msg_id != msg_id:
+                            self._static_active_msg_id = msg_id
+                            self._static_page_index = 0
+                            self._static_page_started_at = asyncio.get_event_loop().time()
+                            last_refresh_tick = 0
+
                         now_ts = asyncio.get_event_loop().time()
-                        if interval > 0 and (now_ts - last_refresh_tick >= interval):
+                        should_advance_page = False
+                        if num_pages > 1 and (now_ts - self._static_page_started_at >= page_dur):
+                            self._static_page_index = (self._static_page_index + 1) % num_pages
+                            self._static_page_started_at = now_ts
+                            should_advance_page = True
+
+                        should_refresh = False
+                        if refresh_int > 0 and (now_ts - last_refresh_tick >= refresh_int):
                             last_refresh_tick = now_ts
+                            should_refresh = True
+
+                        # If page advanced or refresh tick hit, render current page and send
+                        if should_advance_page or should_refresh:
+                            # Re-split pages in case dynamic script tags inside text produced different pages
+                            curr_pages = split_text_pages(raw_text)
+                            if self._static_page_index >= len(curr_pages):
+                                self._static_page_index = 0
+                            page_to_render = curr_pages[self._static_page_index]
+
                             img, _ = render_text_message(
-                                text=msg_cfg.get("text", ""),
+                                text=page_to_render,
                                 width=96,
                                 height=16,
                                 font_id=msg_cfg.get("font_id", "PressStart2P"),
@@ -308,15 +348,14 @@ class SchedulerService:
                                 antialias=msg_cfg.get("antialias", False),
                                 v_alignment=msg_cfg.get("v_alignment", "middle")
                             )
-                            # Convert to 24-bit RGB PNG with maximum compression
                             rgb_img = img.convert("RGB")
-                            buf = io.BytesIO()
-                            rgb_img.save(buf, format="PNG", optimize=True, compress_level=9)
-                            frame_bytes = buf.getvalue()
+                            ble_cfg = cfg.get("ble", {})
+                            png_mode = ble_cfg.get("png_mode", "rgb_raw")
+                            frame_bytes = encode_matrix_png(rgb_img, png_mode=png_mode)
 
-                            # Compute hash to avoid re-transmitting identical frame
+                            # Send frame
                             curr_hash = hashlib.md5(frame_bytes).hexdigest()
-                            if curr_hash != last_rendered_hash:
+                            if curr_hash != last_rendered_hash or should_advance_page:
                                 last_rendered_hash = curr_hash
                                 await ble_worker.send_image_bytes(frame_bytes, file_ext=".png")
 
@@ -441,8 +480,12 @@ class SchedulerService:
                 }, persist=False)
 
                 if not saved_cfg.get("scroll_enabled"):
+                    pages = split_text_pages(saved_cfg.get("text", ""))
+                    initial_page = pages[0] if pages else saved_cfg.get("text", "")
+                    self._static_page_index = 0
+                    self._static_page_started_at = asyncio.get_event_loop().time()
                     img, _ = render_text_message(
-                        text=saved_cfg.get("text", ""),
+                        text=initial_page,
                         width=96,
                         height=16,
                         font_id=saved_cfg.get("font_id", "PressStart2P"),

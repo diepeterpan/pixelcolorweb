@@ -403,13 +403,23 @@
                 </div>
               </div>
 
-              <!-- Dynamic Refresh Interval -->
-              <div>
-                <label class="block text-[11px] font-bold text-slate-600 uppercase mb-1">Live Refresh Interval</label>
-                <div class="flex items-center gap-2">
-                  <input type="number" id="msg-refresh-interval" min="0" max="3600" value="0"
-                    class="w-20 px-2 py-1 bg-white border border-slate-300 rounded-subtle text-xs font-mono text-center">
-                  <span class="text-xs text-slate-500 whitespace-nowrap">seconds (0 = static)</span>
+              <!-- Dynamic Refresh Interval & Page Duration (Static Mode) -->
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-[11px] font-bold text-slate-600 uppercase mb-1">Live Refresh Interval</label>
+                  <div class="flex items-center gap-2">
+                    <input type="number" id="msg-refresh-interval" min="0" max="3600" value="0"
+                      class="w-16 px-2 py-1 bg-white border border-slate-300 rounded-subtle text-xs font-mono text-center">
+                    <span class="text-xs text-slate-500 whitespace-nowrap">sec (0 = static)</span>
+                  </div>
+                </div>
+                <div id="container-page-duration">
+                  <label class="block text-[11px] font-bold text-slate-600 uppercase mb-1">Page Duration</label>
+                  <div class="flex items-center gap-2">
+                    <input type="number" id="msg-page-duration" min="1" max="10" value="3"
+                      class="w-16 px-2 py-1 bg-white border border-slate-300 rounded-subtle text-xs font-mono text-center">
+                    <span class="text-xs text-slate-500 whitespace-nowrap">sec (1-10s)</span>
+                  </div>
                 </div>
               </div>
 

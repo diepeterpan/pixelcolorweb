@@ -3237,6 +3237,8 @@ function setupTextMessageStudio() {
   const refreshIntervalInput = document.getElementById("msg-refresh-interval");
   const refreshValSpan = document.getElementById("msg-refresh-val");
   const emojiSearch = document.getElementById("emoji-search-input");
+  const pageDurationContainer = document.getElementById("container-page-duration");
+  const pageDurationInput = document.getElementById("msg-page-duration");
 
   // Horizontal Scrolling Controls
   const scrollEnabledCheckbox = document.getElementById("msg-scroll-enabled");
@@ -3273,6 +3275,10 @@ function setupTextMessageStudio() {
       if (isScrolling) scrollDirContainer.classList.remove("hidden");
       else scrollDirContainer.classList.add("hidden");
     }
+    if (pageDurationContainer) {
+      if (isScrolling) pageDurationContainer.classList.add("hidden");
+      else pageDurationContainer.classList.remove("hidden");
+    }
 
     if (isScrolling) {
       if (isFrameSkip) {
@@ -3292,6 +3298,9 @@ function setupTextMessageStudio() {
   let livePreviewTimer = null;
   let bottomPreviewCanvas = null;
   let bottomPreviewAnimFrame = null;
+  let staticPagingTimer = null;
+  let staticPagesData = [];
+  let staticPageIndex = 0;
 
   if (refreshIntervalInput) {
     refreshIntervalInput.addEventListener("input", (e) => {
@@ -3567,6 +3576,8 @@ function setupTextMessageStudio() {
     const skipStep = frameSkipStepInput ? Math.max(1, parseInt(frameSkipStepInput.value, 10) || 1) : 1;
     const scrollSpd = scrollSpeedInput ? Math.max(10, parseInt(scrollSpeedInput.value, 10) || 80) : 80;
 
+    const pageDur = pageDurationInput ? Math.max(1, Math.min(10, parseInt(pageDurationInput.value, 10) || 3)) : 3;
+
     const payload = {
       name: configNameInput.value.trim() || "untitled",
       text: textInput.value || " ",
@@ -3577,6 +3588,7 @@ function setupTextMessageStudio() {
       alignment: currentAlignment,
       v_alignment: currentVAlignment,
       antialias: antialiasCheckbox.checked,
+      page_duration: pageDur,
       scroll_enabled: isScrolling,
       scroll_direction: currentScrollDirection,
       scroll_speed: scrollSpd,
@@ -3609,6 +3621,7 @@ function setupTextMessageStudio() {
         if (renderInfo) renderInfo.textContent = "";
 
         if (isScrolling) {
+          if (staticPagingTimer) clearInterval(staticPagingTimer);
           widthBadge.className = "rainbow-badge text-[10px]";
           fitWarning.className = "text-[11px] text-pink-600 mt-1 font-semibold";
           fitWarning.textContent = `⇄ Scrolling Active (${data.content_width}px message loops seamlessly)`;
@@ -3621,15 +3634,39 @@ function setupTextMessageStudio() {
           bottomFullImg.src = data.preview_url;
         } else {
           if (bottomPreviewAnimFrame) cancelAnimationFrame(bottomPreviewAnimFrame);
-          previewImg.src = data.preview_url;
-          if (data.fits_hardware) {
+          if (staticPagingTimer) clearInterval(staticPagingTimer);
+
+          if (data.total_pages && data.total_pages > 1 && data.pages && data.pages.length > 1) {
+            staticPagesData = data.pages;
+            staticPageIndex = 0;
+            const curP = staticPagesData[0];
+            previewImg.src = curP.preview_url;
+            state.previewBitmap = curP.pixels;
             widthBadge.className = "rainbow-badge text-[10px]";
-            fitWarning.className = "text-[11px] text-emerald-600 mt-1 font-semibold";
-            fitWarning.textContent = `✓ Fits hardware bounds (${data.content_width}px / 96px)`;
+            fitWarning.className = "text-[11px] text-indigo-600 mt-1 font-semibold";
+            fitWarning.textContent = `📄 Multi-page Static (1/${data.total_pages} - ${data.page_duration}s per page)`;
+
+            const pageIntervalMs = Math.max(1, (data.page_duration || 3)) * 1000;
+            staticPagingTimer = setInterval(() => {
+              if (state.scrolling.enabled || !staticPagesData || staticPagesData.length <= 1) return;
+              staticPageIndex = (staticPageIndex + 1) % staticPagesData.length;
+              const p = staticPagesData[staticPageIndex];
+              previewImg.src = p.preview_url;
+              state.previewBitmap = p.pixels;
+              fitWarning.textContent = `📄 Multi-page Static (${staticPageIndex + 1}/${staticPagesData.length} - ${data.page_duration}s per page)`;
+              if (typeof drawPixelMatrix === "function") drawPixelMatrix();
+            }, pageIntervalMs);
           } else {
-            widthBadge.className = "bg-red-500 text-white font-bold px-2 py-0.5 rounded text-[10px]";
-            fitWarning.className = "text-[11px] text-red-500 mt-1 font-semibold";
-            fitWarning.textContent = `⚠ Overflow by ${data.content_width - 96}px! Text will clip in static mode.`;
+            previewImg.src = data.preview_url;
+            if (data.fits_hardware) {
+              widthBadge.className = "rainbow-badge text-[10px]";
+              fitWarning.className = "text-[11px] text-emerald-600 mt-1 font-semibold";
+              fitWarning.textContent = `✓ Fits hardware bounds (${data.content_width}px / 96px)`;
+            } else {
+              widthBadge.className = "bg-red-500 text-white font-bold px-2 py-0.5 rounded text-[10px]";
+              fitWarning.className = "text-[11px] text-red-500 mt-1 font-semibold";
+              fitWarning.textContent = `⚠ Overflow by ${data.content_width - 96}px! Text will clip in static mode.`;
+            }
           }
         }
       }
@@ -3645,6 +3682,7 @@ function setupTextMessageStudio() {
   antialiasCheckbox.addEventListener("change", triggerPreview);
   textColorInput.addEventListener("input", triggerPreview);
   bgColorInput.addEventListener("input", triggerPreview);
+  if (pageDurationInput) pageDurationInput.addEventListener("input", triggerPreview);
 
   // Send Image to Matrix
   btnSendMatrix.addEventListener("click", async () => {
@@ -3653,6 +3691,7 @@ function setupTextMessageStudio() {
     lucide.createIcons();
 
     const intervalVal = refreshIntervalInput ? (parseInt(refreshIntervalInput.value, 10) || 0) : 0;
+    const pageDur = pageDurationInput ? Math.max(1, Math.min(10, parseInt(pageDurationInput.value, 10) || 3)) : 3;
     const isScrolling = scrollEnabledCheckbox ? scrollEnabledCheckbox.checked : false;
     const isFrameSkip = frameSkipCheckbox ? frameSkipCheckbox.checked : false;
     const isBlur = blurCheckbox ? blurCheckbox.checked : false;
@@ -3670,6 +3709,7 @@ function setupTextMessageStudio() {
       v_alignment: currentVAlignment,
       antialias: antialiasCheckbox.checked,
       refresh_interval: intervalVal,
+      page_duration: pageDur,
       scroll_enabled: isScrolling,
       scroll_direction: currentScrollDirection,
       scroll_speed: scrollSpd,
@@ -3718,6 +3758,7 @@ function setupTextMessageStudio() {
       return;
     }
     const intervalVal = refreshIntervalInput ? (parseInt(refreshIntervalInput.value, 10) || 0) : 0;
+    const pageDur = pageDurationInput ? Math.max(1, Math.min(10, parseInt(pageDurationInput.value, 10) || 3)) : 3;
     const isScrolling = scrollEnabledCheckbox ? scrollEnabledCheckbox.checked : false;
     const isFrameSkip = frameSkipCheckbox ? frameSkipCheckbox.checked : false;
     const isBlur = blurCheckbox ? blurCheckbox.checked : false;
@@ -3736,6 +3777,7 @@ function setupTextMessageStudio() {
       v_alignment: currentVAlignment,
       antialias: antialiasCheckbox.checked,
       refresh_interval: intervalVal,
+      page_duration: pageDur,
       scroll_enabled: isScrolling,
       scroll_direction: currentScrollDirection,
       scroll_speed: scrollSpd,
@@ -3798,6 +3840,10 @@ function setupTextMessageStudio() {
           refreshIntervalInput.value = iv;
           if (refreshValSpan) refreshValSpan.textContent = iv > 0 ? `Every ${iv}s` : "";
           setupLivePreviewTimer(iv);
+        }
+
+        if (pageDurationInput) {
+          pageDurationInput.value = c.page_duration || 3;
         }
 
         document.querySelectorAll(".btn-alignment").forEach(b => {

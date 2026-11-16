@@ -81,6 +81,52 @@ AVAILABLE_FONTS = [
 TAG_REGEX = re.compile(r"<([a-zA-Z0-9_\-\.]+\.(?:png|jpg|jpeg|gif|webp|bmp|py))>")
 from .script_runner import script_manager
 
+LINEBREAK_PATTERN = re.compile(r"\r\n|\n\r|[\r\n]")
+
+def clean_scrolling_text(text: str) -> str:
+    """
+    Replaces CR / LF / CRLF / LFCR sequences with a single space for continuous scrolling.
+    Consecutive line breaks collapse into a single space.
+    """
+    if not text:
+        return ""
+    return LINEBREAK_PATTERN.sub(" ", text)
+
+def expand_script_tags_in_text(text: str) -> str:
+    """
+    Evaluates any inline <script.py> tags within text and substitutes their output string.
+    """
+    if not text:
+        return ""
+    
+    def _replace_tag(match):
+        tag_val = match.group(1)
+        if tag_val.lower().endswith(".py"):
+            script_id = tag_val[:-3]
+            script = script_manager.get_script(script_id)
+            if script:
+                ok, res_text = script_manager.execute_script(script.get("code", ""))
+                return res_text if ok else f"[{script_id}:ERR]"
+            return f"[{script_id}]"
+        return match.group(0)
+
+    return TAG_REGEX.sub(_replace_tag, text)
+
+def split_text_pages(text: str) -> List[str]:
+    """
+    Splits text by CR / LF / CRLF / LFCR sequences into separate display segments.
+    Consecutive line breaks do not create empty segments.
+    Expands inline script tags first so scripts outputting line breaks will also split into segments.
+    """
+    if not text:
+        return [""]
+    # First expand script tags so script-generated CR/LF properly create segments
+    expanded = expand_script_tags_in_text(text)
+    # Split by line breaks and filter out empty lines
+    parts = [p.strip() for p in LINEBREAK_PATTERN.split(expanded)]
+    non_empty = [p for p in parts if p]
+    return non_empty if non_empty else [" "]
+
 EMOJI_PATTERN = re.compile(
     r"("
     r"[\U0001F1E6-\U0001F1FF]{2}"  # Regional indicator pair (national flags)
@@ -176,7 +222,10 @@ def render_text_message(
     """
     Renders text, emojis, and inline <image.png> tags into an image.
     If full_width is True, the canvas width will accommodate the entire content (at least width).
+    If full_width is True, any CR/LF sequences are cleaned to a single space.
     """
+    if full_width:
+        text = clean_scrolling_text(text)
     font = get_font_instance(font_id, font_size)
     runs = split_into_runs(text)
 

@@ -20,6 +20,8 @@ from .text_message_renderer import (
     get_text_message_config,
     save_text_message_config,
     delete_text_message_config,
+    split_text_pages,
+    clean_scrolling_text,
     TEXT_MESSAGES_DIR
 )
 import base64
@@ -92,6 +94,7 @@ class TextMessageRenderPayload(BaseModel):
     antialias: bool = False
     v_alignment: str = "middle" # "top", "middle", "bottom"
     refresh_interval: int = 0 # In seconds, 0 = static (no dynamic refresh)
+    page_duration: int = 3 # In seconds (1-10s) between static segments when text contains CR/LF
     scroll_enabled: bool = False
     scroll_direction: str = "rtl" # "rtl" (Right to Left) or "ltr" (Left to Right)
     scroll_speed: int = 80 # Milliseconds per pixel step (min 80)
@@ -414,9 +417,14 @@ async def get_config_by_id(config_id: str):
 
 @app.post("/api/text-message/preview")
 async def preview_text_message(payload: TextMessageRenderPayload):
-    # If scroll_enabled is True, render full-width canvas
+    # Check if text is multiline for static mode
+    pages = split_text_pages(payload.text) if not payload.scroll_enabled else [clean_scrolling_text(payload.text)]
+    total_pages = len(pages)
+
+    # Render primary / first page
+    first_text = pages[0] if pages else payload.text
     img, content_w = render_text_message(
-        text=payload.text,
+        text=payload.text if payload.scroll_enabled else first_text,
         width=96,
         height=16,
         font_id=payload.font_id,
@@ -450,6 +458,43 @@ async def preview_text_message(payload: TextMessageRenderPayload):
             row.append([r, g, b])
         pixels.append(row)
 
+    # If static with multiple pages, pre-render all pages for the frontend simulator
+    pages_data = []
+    if not payload.scroll_enabled and total_pages > 1:
+        for idx, page_txt in enumerate(pages):
+            p_img, p_w = render_text_message(
+                text=page_txt,
+                width=96,
+                height=16,
+                font_id=payload.font_id,
+                font_size=payload.font_size,
+                text_color=payload.text_color,
+                bg_color=payload.bg_color,
+                alignment=payload.alignment,
+                antialias=payload.antialias,
+                v_alignment=payload.v_alignment,
+                full_width=False
+            )
+            p_rgb = p_img.convert("RGB")
+            p_buf = BytesIO()
+            p_rgb.save(p_buf, format="PNG")
+            p_b64 = base64.b64encode(p_buf.getvalue()).decode("utf-8")
+            p_pixels = []
+            for y in range(16):
+                row = []
+                for x in range(96):
+                    r, g, b = p_rgb.getpixel((x, y))
+                    row.append([r, g, b])
+                p_pixels.append(row)
+            pages_data.append({
+                "page_index": idx,
+                "text": page_txt,
+                "preview_url": f"data:image/png;base64,{p_b64}",
+                "pixels": p_pixels,
+                "content_width": p_w,
+                "fits": p_w <= 96
+            })
+
     return {
         "success": True,
         "preview_url": f"data:image/png;base64,{b64_data}",
@@ -463,7 +508,10 @@ async def preview_text_message(payload: TextMessageRenderPayload):
         "scroll_speed": payload.scroll_speed,
         "frame_skip_enabled": payload.frame_skip_enabled,
         "frame_skip_step": payload.frame_skip_step,
-        "blur_enabled": payload.blur_enabled
+        "blur_enabled": payload.blur_enabled,
+        "page_duration": payload.page_duration,
+        "total_pages": total_pages,
+        "pages": pages_data
     }
 
 @app.post("/api/text-message/save")
@@ -485,9 +533,16 @@ async def send_text_message(payload: TextMessageRenderPayload):
         "active_text_message": payload.dict()
     }, persist=False)
 
+    # Determine initial text segment for display
+    if payload.scroll_enabled:
+        initial_text = clean_scrolling_text(payload.text)
+    else:
+        pages = split_text_pages(payload.text)
+        initial_text = pages[0] if pages else payload.text
+
     # Render initial frame
     img, content_w = render_text_message(
-        text=payload.text,
+        text=initial_text,
         width=96,
         height=16,
         font_id=payload.font_id,
@@ -535,6 +590,7 @@ async def send_text_message(payload: TextMessageRenderPayload):
         "canvas_width": img_w,
         "pixels": pixels,
         "fits_hardware": content_w <= 96 or payload.scroll_enabled,
+        "page_duration": payload.page_duration,
         "scroll_enabled": payload.scroll_enabled,
         "scroll_direction": payload.scroll_direction,
         "scroll_speed": payload.scroll_speed,
