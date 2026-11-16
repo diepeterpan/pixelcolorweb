@@ -8,7 +8,7 @@
   "matrix": {
     "width": 96,
     "height": 16,
-    "brightness": 10,
+    "brightness": 0,
     "orientation": 0,
     "power": true
   },
