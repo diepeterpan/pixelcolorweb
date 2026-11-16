@@ -131,21 +131,26 @@ def render_text_message(
 
     emoji_size = min(height, max(10, font_size + 4))
 
+    # Pre-process runs: expand script tags recursively so any emojis or sub-tags inside script output are preserved
+    expanded_runs: List[Tuple[str, str]] = []
     for run_type, run_val in runs:
-        if run_type == "emoji":
-            measured_runs.append(("emoji", run_val, emoji_size, None))
-            total_content_width += emoji_size
-        elif run_type == "script":
+        if run_type == "script":
             script_id = run_val[:-3] if run_val.lower().endswith(".py") else run_val
             script = script_manager.get_script(script_id)
             eval_text = f"[{script_id}]"
             if script:
                 ok, res_text = script_manager.execute_script(script.get("code", ""))
                 eval_text = res_text if ok else f"[{script_id}:ERR]"
-            bbox = dummy_draw.textbbox((0, 0), eval_text, font=font)
-            run_w = bbox[2] - bbox[0]
-            measured_runs.append(("text", eval_text, run_w, None))
-            total_content_width += run_w
+            # Parse the evaluated script text into individual text and emoji runs
+            sub_runs = split_into_runs(eval_text)
+            expanded_runs.extend(sub_runs)
+        else:
+            expanded_runs.append((run_type, run_val))
+
+    for run_type, run_val in expanded_runs:
+        if run_type == "emoji":
+            measured_runs.append(("emoji", run_val, emoji_size, None))
+            total_content_width += emoji_size
         elif run_type == "image":
             # Load image from UPLOAD_DIR
             img_path = UPLOAD_DIR / run_val
