@@ -426,11 +426,11 @@ class SchedulerService:
             saved_cfg = get_text_message_config(config_id) if config_id else None
 
             if saved_cfg:
-                # Set active_text_message so any dynamic interval or scrolling activates immediately
+                # Set active_text_message in memory only so dynamic interval or scrolling activates without writing to disk
                 config_manager.update({
                     "mode": "text_message",
                     "active_text_message": saved_cfg
-                })
+                }, persist=False)
 
                 if not saved_cfg.get("scroll_enabled"):
                     img, _ = render_text_message(

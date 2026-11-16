@@ -479,11 +479,11 @@ async def delete_config(config_id: str):
 
 @app.post("/api/text-message/send")
 async def send_text_message(payload: TextMessageRenderPayload):
-    # Store text_message configuration for live background refreshing & scrolling
+    # Store text_message configuration in memory only for live background refreshing & scrolling (avoids writing to disk)
     config_manager.update({
         "mode": "text_message",
         "active_text_message": payload.dict()
-    })
+    }, persist=False)
 
     # Render initial frame
     img, content_w = render_text_message(

@@ -79,9 +79,10 @@ class ConfigManager:
     def get(self) -> Dict[str, Any]:
         return self._config
 
-    def update(self, updates: Dict[str, Any]) -> Dict[str, Any]:
+    def update(self, updates: Dict[str, Any], persist: bool = True) -> Dict[str, Any]:
         self._config = self._deep_update(self._config, updates)
-        self.save()
+        if persist:
+            self.save()
         return self._config
 
     def save(self):

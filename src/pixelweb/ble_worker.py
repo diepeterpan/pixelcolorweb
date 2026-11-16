@@ -310,7 +310,14 @@ class BLEWorker:
 
     async def apply_current_mode(self):
         cfg = config_manager.get()
-        mode = cfg.get("mode", "image")
+        sched_cfg = cfg.get("schedule", {})
+
+        # If schedule is enabled, scheduler_service handles playback automatically
+        if sched_cfg.get("enabled"):
+            logger.info("Schedule is enabled; scheduler service will drive playback on connect.")
+            return
+
+        mode = cfg.get("mode", "text")
         logger.info(f"Applying startup mode: {mode}")
         if mode == "image":
             img_file = cfg.get("active_image")
@@ -321,6 +328,22 @@ class BLEWorker:
                     p = Path("data/uploads") / img_file
                 if p.exists():
                     await self.send_image(str(p))
+        elif mode == "text" or mode == "text_message":
+            t_cfg = cfg.get("text", {})
+            startup_text = t_cfg.get("content", "HELLO MATRIX 96x16")
+            await self.send_text(
+                text=startup_text,
+                color=t_cfg.get("color", "#FF007F"),
+                bg_color=t_cfg.get("bg_color", "#000000"),
+                rainbow_mode=t_cfg.get("rainbow_mode", 1),
+                animation=t_cfg.get("animation", 1),
+                speed=t_cfg.get("speed", 80),
+                font=t_cfg.get("font", "UNIFONT")
+            )
+        elif mode == "clock":
+            c_cfg = cfg.get("clock", {})
+            # send clock command
+            pass
 
     async def send_text(
         self,
