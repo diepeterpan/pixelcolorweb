@@ -10,7 +10,7 @@
     "height": 16,
     "brightness": 0,
     "orientation": 0,
-    "power": true
+    "power": false
   },
   "mode": "text_message",
   "text": {
@@ -31,7 +31,7 @@
     "format_24": true
   },
   "schedule": {
-    "enabled": true,
+    "enabled": false,
     "slots": [
       {
         "id": "slot_time_test",
@@ -90,7 +90,13 @@
     "alignment": "center",
     "antialias": false,
     "v_alignment": "middle",
-    "refresh_interval": 1,
-    "id": "custom_msg"
+    "refresh_interval": 10,
+    "id": "custom_msg",
+    "scroll_enabled": true,
+    "scroll_direction": "rtl",
+    "scroll_speed": 30,
+    "frame_skip_enabled": false,
+    "frame_skip_step": 1,
+    "blur_enabled": false
   }
 }

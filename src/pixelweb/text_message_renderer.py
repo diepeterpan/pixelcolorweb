@@ -2,12 +2,63 @@ import json
 import logging
 import re
 import unicodedata
+import urllib.request
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from PIL import Image, ImageDraw, ImageFont
 
-from pypixelcolor.lib.emoji_manager import get_emoji_image
+import pypixelcolor.lib.emoji_manager as em
+from pypixelcolor.lib.emoji_manager import get_emoji_image, CACHE_DIR, TWEMOJI_BASE_URL, get_emoji_codepoint
+
+# Patch / enhance download_emoji in emoji_manager to support multi-codepoint flag and ZWJ sequences
+_orig_download_emoji = em.download_emoji
+
+def _enhanced_download_emoji(char: str) -> Optional[Image.Image]:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    candidates = []
+
+    # 1. Exact raw codepoints (retains variation selectors if needed)
+    cps_full = [f"{ord(c):x}" for c in char]
+    candidates.append("-".join(cps_full))
+
+    # 2. Standard get_emoji_codepoint (which strips variation selectors)
+    raw_code = get_emoji_codepoint(char)
+    candidates.append(raw_code)
+
+    # 3. Specific twemoji conventions (e.g. rainbow flag, transgender, pirate flag)
+    if raw_code == "1f3f4-200d-2620":
+        candidates.append("1f3f4-200d-2620-fe0f")
+    elif raw_code == "1f3f3-200d-1f308":
+        candidates.append("1f3f3-fe0f-200d-1f308")
+    elif raw_code == "1f3f3-200d-26a7":
+        candidates.append("1f3f3-fe0f-200d-26a7-fe0f")
+
+    seen = set()
+    unique_candidates = [c for c in candidates if not (c in seen or seen.add(c))]
+
+    for codepoint in unique_candidates:
+        cache_path = CACHE_DIR / f"{codepoint}.png"
+        if cache_path.exists():
+            try:
+                return Image.open(cache_path)
+            except Exception:
+                cache_path.unlink(missing_ok=True)
+
+        url = f"{TWEMOJI_BASE_URL}{codepoint}.png"
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=5) as response:
+                image_data = response.read()
+            img = Image.open(BytesIO(image_data))
+            img.save(cache_path, "PNG")
+            return img
+        except Exception:
+            continue
+
+    return None
+
+em.download_emoji = _enhanced_download_emoji
 
 logger = logging.getLogger("TextMessageRenderer")
 
@@ -30,6 +81,17 @@ AVAILABLE_FONTS = [
 TAG_REGEX = re.compile(r"<([a-zA-Z0-9_\-\.]+\.(?:png|jpg|jpeg|gif|webp|bmp|py))>")
 from .script_runner import script_manager
 
+EMOJI_PATTERN = re.compile(
+    r"("
+    r"[\U0001F1E6-\U0001F1FF]{2}"  # Regional indicator pair (national flags)
+    r"|"
+    r"\U0001F3F4[\U000E0020-\U000E007E]+\U000E007F"  # Subdivision flag (e.g. England, Scotland, Wales)
+    r"|"
+    r"(?:[\U0001F300-\U0001FAFF\u2600-\u27BF\u2300-\u23FF\u2B50-\u2B55\uD83C\uDDE6-\uDDFF]|[\u203C\u2049\u2122\u2139\u2194-\u2199\u21A9-\u21AA\u25AA-\u25AB\u25B6\u25C0\u25FB-\u25FE\u3030\u303D\u3297\u3299])(?:\uFE0F)?"
+    r"(?:\u200D(?:[\U0001F300-\U0001FAFF\u2600-\u27BF\u2300-\u23FF\u2B50-\u2B55]|[\u203C\u2049\u2122\u2139\u2194-\u2199\u21A9-\u21AA\u25AA-\u25AB\u25B6\u25C0\u25FB-\u25FE\u3030\u303D\u3297\u3299])(?:\uFE0F)?)*"
+    r")"
+)
+
 def is_emoji_char(char: str) -> bool:
     cp = ord(char)
     if (0x1F300 <= cp <= 0x1FAFF) or \
@@ -45,7 +107,7 @@ def split_into_runs(text: str) -> List[Tuple[str, str]]:
     """
     Splits text into tokens of:
     - ('text', string)
-    - ('emoji', emoji_char)
+    - ('emoji', emoji_char_or_sequence)
     - ('image', filename)
     - ('script', script_id_or_name)
     """
@@ -69,17 +131,14 @@ def split_into_runs(text: str) -> List[Tuple[str, str]]:
         if p_type in ("image", "script"):
             runs.append((p_type, val))
         else:
-            curr = []
-            for ch in val:
-                if is_emoji_char(ch):
-                    if curr:
-                        runs.append(("text", "".join(curr)))
-                        curr = []
-                    runs.append(("emoji", ch))
-                else:
-                    curr.append(ch)
-            if curr:
-                runs.append(("text", "".join(curr)))
+            last = 0
+            for m in EMOJI_PATTERN.finditer(val):
+                if m.start() > last:
+                    runs.append(("text", val[last:m.start()]))
+                runs.append(("emoji", m.group(0)))
+                last = m.end()
+            if last < len(val):
+                runs.append(("text", val[last:]))
 
     return runs
 
