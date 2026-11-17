@@ -265,6 +265,14 @@ def track_script_http(script_id: Optional[str], caller: str = "script"):
 class ScriptManager:
     def __init__(self):
         self._ensure_default_scripts()
+        self._contexts: Dict[str, Dict[str, Any]] = {}
+        self._code_hashes: Dict[str, str] = {}
+        self._context_lock = threading.Lock()
+
+    def clear_context(self, script_id: str):
+        with self._context_lock:
+            self._contexts.pop(script_id, None)
+            self._code_hashes.pop(script_id, None)
 
     def _ensure_default_scripts(self):
         for script_id, data in DEFAULT_SCRIPTS.items():
@@ -367,6 +375,22 @@ class ScriptManager:
             report += " Syntax verified successfully."
         return True, fixed_code, report
 
+    def _get_base_globals(self) -> Dict[str, Any]:
+        return {
+            "datetime": datetime,
+            "time": time,
+            "str": str,
+            "int": int,
+            "float": float,
+            "len": len,
+            "range": range,
+            "list": list,
+            "dict": dict,
+            "min": min,
+            "max": max,
+            "round": round
+        }
+
     def execute_script(
         self,
         code: str,
@@ -389,31 +413,33 @@ class ScriptManager:
 
         effective_script_id = script_id if should_track else None
 
-        safe_globals = {
-            "datetime": datetime,
-            "time": time,
-            "str": str,
-            "int": int,
-            "float": float,
-            "len": len,
-            "range": range,
-            "list": list,
-            "dict": dict,
-            "min": min,
-            "max": max,
-            "round": round
-        }
-        local_scope = {}
         try:
             with track_script_http(effective_script_id, caller=caller):
-                exec(code, safe_globals, local_scope)
-                if "get_text" not in local_scope or not callable(local_scope["get_text"]):
+                if script_id:
+                    with self._context_lock:
+                        # Check if context already compiled and code is unchanged
+                        if script_id in self._contexts and self._code_hashes.get(script_id) == code:
+                            scope = self._contexts[script_id]
+                        else:
+                            # Single dictionary as both globals and locals so module-level globals persist
+                            scope = self._get_base_globals()
+                            exec(code, scope)
+                            self._contexts[script_id] = scope
+                            self._code_hashes[script_id] = code
+                else:
+                    scope = self._get_base_globals()
+                    exec(code, scope)
+
+                if "get_text" not in scope or not callable(scope["get_text"]):
                     return False, "Function get_text() was not found or is not callable."
-                result = local_scope["get_text"]()
+                result = scope["get_text"]()
                 if not isinstance(result, str):
                     result = str(result)
                 return True, result
         except Exception as e:
+            # If runtime error occurred during exec of a cached context, invalidate it so next run recompiles
+            if script_id:
+                self.clear_context(script_id)
             return False, f"Runtime Error: {str(e)}"
 
     def save_script(
@@ -439,6 +465,7 @@ class ScriptManager:
         }
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+        self.clear_context(script_id)
         return True, None
 
     def delete_script(self, script_id: str) -> bool:
@@ -446,6 +473,7 @@ class ScriptManager:
         if file_path.exists():
             file_path.unlink()
             metrics_store.clear(script_id)
+            self.clear_context(script_id)
             return True
         return False
 

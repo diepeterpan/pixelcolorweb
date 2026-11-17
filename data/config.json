@@ -31,7 +31,7 @@
     "format_24": true
   },
   "schedule": {
-    "enabled": false,
+    "enabled": true,
     "slots": [
       {
         "id": "slot_time_test",
@@ -42,7 +42,7 @@
         "type": "text_message",
         "config_id": "custom_msg",
         "config_name": "Morning Notice",
-        "enabled": true
+        "enabled": false
       },
       {
         "id": "slot_seq_2",
@@ -52,7 +52,7 @@
         "type": "text_message",
         "config_id": "custom_msg",
         "config_name": "Promo 2 (15s)",
-        "enabled": true
+        "enabled": false
       },
       {
         "id": "slot_seq_1",
@@ -62,7 +62,7 @@
         "type": "text_message",
         "config_id": "custom_msg",
         "config_name": "Promo 1 (10s)",
-        "enabled": true
+        "enabled": false
       },
       {
         "id": "slot_1794805363512",
@@ -74,6 +74,18 @@
         "type": "text_message",
         "config_id": "weather_msg",
         "config_name": "weather_msg (\"<weather_ct.py>\")"
+      },
+      {
+        "id": "slot_1794903987060",
+        "name": "tides",
+        "enabled": true,
+        "schedule_mode": "sequential",
+        "start_time": null,
+        "end_time": null,
+        "duration_seconds": 15,
+        "type": "text_message",
+        "config_id": "tides",
+        "config_name": "tides (\"<tides.py>\")"
       }
     ]
   },
