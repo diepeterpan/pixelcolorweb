@@ -1,6 +1,10 @@
 import ast
 import json
+import threading
 import time
+import urllib.request
+import urllib.error
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -13,6 +17,7 @@ DEFAULT_SCRIPTS = {
         "id": "default_clock",
         "name": "Live Digital Clock & Date",
         "description": "Displays current local time with seconds and date",
+        "track_http": True,
         "code": '''def get_text():
     # Returns formatted date and time for 96x16 matrix
     now = datetime.now()
@@ -23,6 +28,7 @@ DEFAULT_SCRIPTS = {
         "id": "rainbow_welcome",
         "name": "Rainbow Welcome Banner",
         "description": "Vibrant marquee text suitable for 96x16 display",
+        "track_http": True,
         "code": '''def get_text():
     return "★ PIXELCOLOR 96x16 WEB MATRIX ACTIVE ★"
 '''
@@ -31,6 +37,7 @@ DEFAULT_SCRIPTS = {
         "id": "system_status",
         "name": "Dynamic Greeting",
         "description": "Changes text greeting based on hour of the day",
+        "track_http": True,
         "code": '''def get_text():
     hour = datetime.now().hour
     if hour < 12:
@@ -43,6 +50,217 @@ DEFAULT_SCRIPTS = {
 '''
     }
 }
+
+
+class ScriptMetricsStore:
+    """In-memory time-windowed (last 1 hour) HTTP metrics store per script."""
+
+    def __init__(self, window_seconds: int = 3600):
+        self.window_seconds = window_seconds
+        self._lock = threading.Lock()
+        # script_id -> list of record dicts
+        self._events: Dict[str, List[Dict[str, Any]]] = {}
+
+    def _prune(self, script_id: Optional[str] = None):
+        cutoff = time.time() - self.window_seconds
+        with self._lock:
+            targets = [script_id] if script_id else list(self._events.keys())
+            for sid in targets:
+                if sid in self._events:
+                    self._events[sid] = [ev for ev in self._events[sid] if ev.get("timestamp_epoch", 0) >= cutoff]
+
+    def record_call(
+        self,
+        script_id: str,
+        method: str,
+        url: str,
+        status_code: Any,
+        duration_ms: float,
+        caller: str = "script",
+        error: Optional[str] = None
+    ):
+        if not script_id:
+            return
+        now = time.time()
+        record = {
+            "timestamp_epoch": now,
+            "timestamp": datetime.fromtimestamp(now).strftime("%H:%M:%S"),
+            "iso_time": datetime.fromtimestamp(now).isoformat(),
+            "method": method.upper() if method else "GET",
+            "url": str(url),
+            "status_code": status_code,
+            "duration_ms": round(duration_ms, 1),
+            "caller": caller,
+            "error": error
+        }
+        with self._lock:
+            if script_id not in self._events:
+                self._events[script_id] = []
+            self._events[script_id].append(record)
+        # Prune old events for this script
+        self._prune(script_id)
+
+    def get_metrics(self, script_id: str) -> Dict[str, Any]:
+        self._prune(script_id)
+        with self._lock:
+            records = list(self._events.get(script_id, []))
+
+        total_calls = len(records)
+        if total_calls == 0:
+            return {
+                "script_id": script_id,
+                "window_seconds": self.window_seconds,
+                "total_calls": 0,
+                "success_count": 0,
+                "error_count": 0,
+                "avg_duration_ms": 0.0,
+                "requests_per_minute": 0.0,
+                "records": []
+            }
+
+        success_count = sum(
+            1 for r in records
+            if isinstance(r.get("status_code"), int) and 200 <= r["status_code"] < 400
+        )
+        error_count = total_calls - success_count
+        avg_duration = sum(r.get("duration_ms", 0.0) for r in records) / total_calls
+        req_per_min = round(total_calls / 60.0, 2)
+
+        # Most recent calls first
+        sorted_records = sorted(records, key=lambda x: x.get("timestamp_epoch", 0), reverse=True)
+
+        return {
+            "script_id": script_id,
+            "window_seconds": self.window_seconds,
+            "total_calls": total_calls,
+            "success_count": success_count,
+            "error_count": error_count,
+            "avg_duration_ms": round(avg_duration, 1),
+            "requests_per_minute": req_per_min,
+            "records": sorted_records
+        }
+
+    def clear(self, script_id: str):
+        with self._lock:
+            if script_id in self._events:
+                self._events[script_id] = []
+
+
+metrics_store = ScriptMetricsStore()
+
+
+@contextmanager
+def track_script_http(script_id: Optional[str], caller: str = "script"):
+    """
+    Context manager that silently intercepts urllib.request.urlopen and requests.Session.send
+    during script execution and records metrics to metrics_store.
+    Does NOT output logs to console or file.
+    """
+    if not script_id:
+        yield
+        return
+
+    orig_urlopen = urllib.request.urlopen
+
+    def hooked_urlopen(url_or_req, *args, **kwargs):
+        start = time.perf_counter()
+        method = "GET"
+        url = ""
+        if isinstance(url_or_req, str):
+            url = url_or_req
+        elif hasattr(url_or_req, "full_url"):
+            url = getattr(url_or_req, "full_url", "")
+            method = getattr(url_or_req, "get_method", lambda: "GET")()
+
+        try:
+            resp = orig_urlopen(url_or_req, *args, **kwargs)
+            duration_ms = (time.perf_counter() - start) * 1000
+            status = getattr(resp, "status", getattr(resp, "code", 200))
+            metrics_store.record_call(
+                script_id=script_id,
+                method=method,
+                url=url,
+                status_code=status,
+                duration_ms=duration_ms,
+                caller=caller
+            )
+            return resp
+        except urllib.error.HTTPError as e:
+            duration_ms = (time.perf_counter() - start) * 1000
+            metrics_store.record_call(
+                script_id=script_id,
+                method=method,
+                url=url,
+                status_code=e.code,
+                duration_ms=duration_ms,
+                caller=caller,
+                error=f"HTTPError: {e.code} {e.reason}"
+            )
+            raise
+        except Exception as e:
+            duration_ms = (time.perf_counter() - start) * 1000
+            metrics_store.record_call(
+                script_id=script_id,
+                method=method,
+                url=url,
+                status_code="ERROR",
+                duration_ms=duration_ms,
+                caller=caller,
+                error=str(e)
+            )
+            raise
+
+    urllib.request.urlopen = hooked_urlopen
+
+    orig_requests_send = None
+    try:
+        import requests
+        orig_requests_send = requests.Session.send
+
+        def hooked_requests_send(session_self, request, *args, **kwargs):
+            start = time.perf_counter()
+            method = getattr(request, "method", "GET")
+            url = getattr(request, "url", "")
+            try:
+                resp = orig_requests_send(session_self, request, *args, **kwargs)
+                duration_ms = (time.perf_counter() - start) * 1000
+                metrics_store.record_call(
+                    script_id=script_id,
+                    method=method,
+                    url=url,
+                    status_code=resp.status_code,
+                    duration_ms=duration_ms,
+                    caller=caller
+                )
+                return resp
+            except Exception as e:
+                duration_ms = (time.perf_counter() - start) * 1000
+                metrics_store.record_call(
+                    script_id=script_id,
+                    method=method,
+                    url=url,
+                    status_code="ERROR",
+                    duration_ms=duration_ms,
+                    caller=caller,
+                    error=str(e)
+                )
+                raise
+
+        requests.Session.send = hooked_requests_send
+    except ImportError:
+        pass
+
+    try:
+        yield
+    finally:
+        urllib.request.urlopen = orig_urlopen
+        if orig_requests_send is not None:
+            try:
+                import requests
+                requests.Session.send = orig_requests_send
+            except ImportError:
+                pass
+
 
 class ScriptManager:
     def __init__(self):
@@ -60,7 +278,10 @@ class ScriptManager:
         for file in SCRIPTS_DIR.glob("*.json"):
             try:
                 with open(file, "r", encoding="utf-8") as f:
-                    scripts.append(json.load(f))
+                    data = json.load(f)
+                    if "track_http" not in data:
+                        data["track_http"] = True
+                    scripts.append(data)
             except Exception as e:
                 print(f"Error reading script {file}: {e}")
         return scripts
@@ -70,7 +291,10 @@ class ScriptManager:
         if not file_path.exists():
             return None
         with open(file_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            if "track_http" not in data:
+                data["track_http"] = True
+            return data
 
     def validate_code(self, code: str) -> Tuple[bool, Optional[str]]:
         try:
@@ -143,10 +367,27 @@ class ScriptManager:
             report += " Syntax verified successfully."
         return True, fixed_code, report
 
-    def execute_script(self, code: str) -> Tuple[bool, str]:
+    def execute_script(
+        self,
+        code: str,
+        script_id: Optional[str] = None,
+        caller: str = "test_run",
+        track_http: Optional[bool] = None
+    ) -> Tuple[bool, str]:
         valid, err = self.validate_code(code)
         if not valid:
             return False, err or "Invalid code"
+
+        # Determine whether tracking should be active
+        should_track = True
+        if track_http is not None:
+            should_track = track_http
+        elif script_id:
+            script_data = self.get_script(script_id)
+            if script_data:
+                should_track = script_data.get("track_http", True)
+
+        effective_script_id = script_id if should_track else None
 
         safe_globals = {
             "datetime": datetime,
@@ -164,17 +405,25 @@ class ScriptManager:
         }
         local_scope = {}
         try:
-            exec(code, safe_globals, local_scope)
-            if "get_text" not in local_scope or not callable(local_scope["get_text"]):
-                return False, "Function get_text() was not found or is not callable."
-            result = local_scope["get_text"]()
-            if not isinstance(result, str):
-                result = str(result)
-            return True, result
+            with track_script_http(effective_script_id, caller=caller):
+                exec(code, safe_globals, local_scope)
+                if "get_text" not in local_scope or not callable(local_scope["get_text"]):
+                    return False, "Function get_text() was not found or is not callable."
+                result = local_scope["get_text"]()
+                if not isinstance(result, str):
+                    result = str(result)
+                return True, result
         except Exception as e:
             return False, f"Runtime Error: {str(e)}"
 
-    def save_script(self, script_id: str, name: str, description: str, code: str) -> Tuple[bool, Optional[str]]:
+    def save_script(
+        self,
+        script_id: str,
+        name: str,
+        description: str,
+        code: str,
+        track_http: bool = True
+    ) -> Tuple[bool, Optional[str]]:
         valid, err = self.validate_code(code)
         if not valid:
             return False, err
@@ -185,6 +434,7 @@ class ScriptManager:
             "name": name,
             "description": description,
             "code": code,
+            "track_http": bool(track_http),
             "updated_at": datetime.now().isoformat()
         }
         with open(file_path, "w", encoding="utf-8") as f:
@@ -195,8 +445,9 @@ class ScriptManager:
         file_path = SCRIPTS_DIR / f"{script_id}.json"
         if file_path.exists():
             file_path.unlink()
+            metrics_store.clear(script_id)
             return True
         return False
 
-script_manager = ScriptManager()
 
+script_manager = ScriptManager()

@@ -105,7 +105,12 @@ def expand_script_tags_in_text(text: str) -> str:
             script_id = tag_val[:-3]
             script = script_manager.get_script(script_id)
             if script:
-                ok, res_text = script_manager.execute_script(script.get("code", ""))
+                ok, res_text = script_manager.execute_script(
+                    script.get("code", ""),
+                    script_id=script_id,
+                    caller="renderer",
+                    track_http=script.get("track_http", True)
+                )
                 return res_text if ok else f"[{script_id}:ERR]"
             return f"[{script_id}]"
         return match.group(0)
@@ -247,7 +252,12 @@ def render_text_message(
             script = script_manager.get_script(script_id)
             eval_text = f"[{script_id}]"
             if script:
-                ok, res_text = script_manager.execute_script(script.get("code", ""))
+                ok, res_text = script_manager.execute_script(
+                    script.get("code", ""),
+                    script_id=script_id,
+                    caller="renderer",
+                    track_http=script.get("track_http", True)
+                )
                 eval_text = res_text if ok else f"[{script_id}:ERR]"
             # Parse the evaluated script text into individual text and emoji runs
             sub_runs = split_into_runs(eval_text)

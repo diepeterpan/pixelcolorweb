@@ -365,7 +365,12 @@ class SchedulerService:
                     if script_id:
                         script = script_manager.get_script(script_id)
                         if script:
-                            ok, text_val = script_manager.execute_script(script["code"])
+                            ok, text_val = script_manager.execute_script(
+                                script["code"],
+                                script_id=script_id,
+                                caller="scheduler",
+                                track_http=script.get("track_http", True)
+                            )
                             if ok:
                                 t_cfg = cfg.get("text", {})
                                 await ble_worker.send_text(
@@ -515,7 +520,12 @@ class SchedulerService:
             if script_id:
                 script = script_manager.get_script(script_id)
                 if script:
-                    ok, text_val = script_manager.execute_script(script["code"])
+                    ok, text_val = script_manager.execute_script(
+                        script["code"],
+                        script_id=script_id,
+                        caller="playlist_scheduler",
+                        track_http=script.get("track_http", True)
+                    )
                     if ok:
                         await ble_worker.send_text(
                             text=text_val,

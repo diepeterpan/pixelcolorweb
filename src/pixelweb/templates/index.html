@@ -577,7 +577,7 @@
               </p>
             </div>
 
-            <!-- Controls Group: Name | Presets | Load | Save | Delete -->
+            <!-- Controls Group: Name | Presets | Load | Save | Delete | Track HTTP -->
             <div class="flex flex-wrap items-center gap-2">
               <div class="flex items-center gap-1.5">
                 <label class="text-[11px] font-bold text-slate-500 uppercase">Script Name:</label>
@@ -598,6 +598,13 @@
                 <button id="btn-delete-script" class="btn-3d btn-del text-xs py-1 px-2" title="Delete Script">
                   <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                 </button>
+              </div>
+
+              <div class="flex items-center gap-1.5 border-l border-slate-200 pl-2">
+                <label class="flex items-center gap-1 text-xs text-slate-700 cursor-pointer font-medium select-none" title="Track HTTP/API requests made by this script in memory (last 1 hour)">
+                  <input type="checkbox" id="script-track-http" checked class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5">
+                  <span>Track HTTP/API</span>
+                </label>
               </div>
             </div>
           </div>
@@ -639,6 +646,73 @@
                   title="Convert tabs to 4 spaces and fix inconsistent indentation">
                   <i data-lucide="align-left" class="w-3.5 h-3.5 mr-1.5"></i> Fix Indentation (4 Spaces)
                 </button>
+              </div>
+            </div>
+
+            <!-- HTTP / API Metrics Panel (Last 1 Hour) -->
+            <div id="script-metrics-container" class="mt-4 border border-slate-200 rounded-subtle p-3.5 bg-slate-50">
+              <div class="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-200">
+                <div class="flex items-center gap-2">
+                  <i data-lucide="activity" class="w-4 h-4 text-indigo-600"></i>
+                  <span class="text-xs font-bold text-slate-700 uppercase tracking-wide">HTTP & API Call Metrics (Past 1 Hour)</span>
+                  <span id="metrics-script-badge" class="px-2 py-0.5 text-[11px] font-mono rounded bg-indigo-100 text-indigo-800 font-semibold">greeting.py</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <button id="btn-refresh-metrics" class="btn-3d text-xs py-1 px-2.5 bg-white text-slate-700 hover:bg-slate-100" title="Refresh Metrics">
+                    <i data-lucide="refresh-cw" class="w-3 h-3 mr-1 inline"></i> Refresh
+                  </button>
+                  <button id="btn-clear-metrics" class="btn-3d text-xs py-1 px-2.5 bg-white text-rose-600 hover:bg-rose-50" title="Clear in-memory metrics for this script">
+                    <i data-lucide="trash" class="w-3 h-3 mr-1 inline"></i> Clear
+                  </button>
+                </div>
+              </div>
+
+              <!-- Metrics Summary Cards -->
+              <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 mt-3">
+                <div class="bg-white p-2 rounded border border-slate-200 text-center">
+                  <div class="text-[10px] uppercase font-bold text-slate-400">Calls (1h)</div>
+                  <div id="metrics-total-calls" class="text-base font-bold text-slate-800">0</div>
+                </div>
+                <div class="bg-white p-2 rounded border border-slate-200 text-center">
+                  <div class="text-[10px] uppercase font-bold text-emerald-600">Success (2xx)</div>
+                  <div id="metrics-success-calls" class="text-base font-bold text-emerald-600">0</div>
+                </div>
+                <div class="bg-white p-2 rounded border border-slate-200 text-center">
+                  <div class="text-[10px] uppercase font-bold text-rose-600">Errors (4xx/5xx)</div>
+                  <div id="metrics-error-calls" class="text-base font-bold text-rose-600">0</div>
+                </div>
+                <div class="bg-white p-2 rounded border border-slate-200 text-center">
+                  <div class="text-[10px] uppercase font-bold text-slate-400">Avg Latency</div>
+                  <div id="metrics-avg-duration" class="text-base font-bold text-slate-800">0 ms</div>
+                </div>
+                <div class="bg-white p-2 rounded border border-slate-200 text-center col-span-2 sm:col-span-1">
+                  <div class="text-[10px] uppercase font-bold text-slate-400">Rate</div>
+                  <div id="metrics-rate" class="text-base font-bold text-slate-800">0 req/m</div>
+                </div>
+              </div>
+
+              <!-- Calls Table -->
+              <div class="mt-3">
+                <div class="text-[11px] font-semibold text-slate-500 uppercase mb-1">Recent Requests (Past 60 Minutes)</div>
+                <div class="overflow-x-auto max-h-56 overflow-y-auto border border-slate-200 rounded bg-white">
+                  <table class="w-full text-left text-xs border-collapse">
+                    <thead class="bg-slate-100 text-slate-600 sticky top-0 border-b border-slate-200 text-[11px]">
+                      <tr>
+                        <th class="py-1.5 px-2">Time</th>
+                        <th class="py-1.5 px-2">Method</th>
+                        <th class="py-1.5 px-2">URL / Target</th>
+                        <th class="py-1.5 px-2">Status</th>
+                        <th class="py-1.5 px-2">Latency</th>
+                        <th class="py-1.5 px-2">Caller</th>
+                      </tr>
+                    </thead>
+                    <tbody id="metrics-table-body" class="divide-y divide-slate-100 font-mono text-[11px]">
+                      <tr>
+                        <td colspan="6" class="py-4 text-center text-slate-400 font-sans">No HTTP/API requests recorded in the last 60 minutes.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </div>

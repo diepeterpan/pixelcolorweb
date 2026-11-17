@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from .logger_config import setup_logging
 from .config_manager import config_manager
-from .script_runner import script_manager
+from .script_runner import script_manager, metrics_store
 from .image_processor import image_manager, UPLOAD_DIR, encode_matrix_png
 from .ble_worker import ble_worker
 from .scheduler import scheduler_service, apply_motion_blur
@@ -49,12 +49,15 @@ class TextPayload(BaseModel):
 
 class ScriptTestPayload(BaseModel):
     code: str
+    script_id: Optional[str] = None
+    track_http: Optional[bool] = None
 
 class ScriptSavePayload(BaseModel):
     id: str
     name: str
     description: str
     code: str
+    track_http: bool = True
 
 class ConnectPayload(BaseModel):
     address: str
@@ -319,7 +322,12 @@ async def get_script(script_id: str):
 
 @app.post("/api/scripts/test")
 async def test_script(payload: ScriptTestPayload):
-    ok, output = script_manager.execute_script(payload.code)
+    ok, output = script_manager.execute_script(
+        payload.code,
+        script_id=payload.script_id,
+        caller="test_run",
+        track_http=payload.track_http
+    )
     return {"success": ok, "output": output if ok else None, "error": None if ok else output}
 
 @app.post("/api/scripts/check-syntax")
@@ -334,9 +342,24 @@ async def fix_script_indent(payload: ScriptTestPayload):
 
 @app.post("/api/scripts/save")
 async def save_script(payload: ScriptSavePayload):
-    ok, err = script_manager.save_script(payload.id, payload.name, payload.description, payload.code)
+    ok, err = script_manager.save_script(
+        payload.id,
+        payload.name,
+        payload.description,
+        payload.code,
+        track_http=payload.track_http
+    )
     # Save script artifact only without forcing background mode override
     return {"success": ok, "error": err}
+
+@app.get("/api/scripts/{script_id}/metrics")
+async def get_script_metrics(script_id: str):
+    return metrics_store.get_metrics(script_id)
+
+@app.post("/api/scripts/{script_id}/metrics/clear")
+async def clear_script_metrics(script_id: str):
+    metrics_store.clear(script_id)
+    return {"success": True}
 
 @app.delete("/api/scripts/{script_id}")
 async def delete_script(script_id: str):

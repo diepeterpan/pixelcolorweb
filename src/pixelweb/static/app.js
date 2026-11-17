@@ -553,6 +553,98 @@ function setupScriptControls() {
   const outputBox = document.getElementById("script-output");
   const picker = document.getElementById("script-preset-picker");
   const btnLoad = document.getElementById("btn-load-script");
+  const chkTrackHttp = document.getElementById("script-track-http");
+  const badgeMetricsScript = document.getElementById("metrics-script-badge");
+  const btnRefreshMetrics = document.getElementById("btn-refresh-metrics");
+  const btnClearMetrics = document.getElementById("btn-clear-metrics");
+  const elMetricsTotal = document.getElementById("metrics-total-calls");
+  const elMetricsSuccess = document.getElementById("metrics-success-calls");
+  const elMetricsError = document.getElementById("metrics-error-calls");
+  const elMetricsAvgDuration = document.getElementById("metrics-avg-duration");
+  const elMetricsRate = document.getElementById("metrics-rate");
+  const elMetricsTableBody = document.getElementById("metrics-table-body");
+
+  function getCurrentScriptId() {
+    const raw = (scriptNameInput.value || picker.value || "").trim();
+    return raw.replace(/\.py$/i, "").toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+  }
+
+  async function loadMetricsForCurrentScript() {
+    const scriptId = getCurrentScriptId();
+    if (badgeMetricsScript) {
+      badgeMetricsScript.textContent = scriptId ? `${scriptId}.py` : "--";
+    }
+    if (!scriptId) {
+      if (elMetricsTableBody) {
+        elMetricsTableBody.innerHTML = `<tr><td colspan="6" class="py-4 text-center text-slate-400 font-sans">No script loaded or selected.</td></tr>`;
+      }
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/scripts/${scriptId}/metrics`);
+      if (!res.ok) return;
+      const data = await res.json();
+
+      if (elMetricsTotal) elMetricsTotal.textContent = data.total_calls || 0;
+      if (elMetricsSuccess) {
+        const pct = data.total_calls ? Math.round((data.success_count / data.total_calls) * 100) : 100;
+        elMetricsSuccess.textContent = `${data.success_count || 0} (${pct}%)`;
+      }
+      if (elMetricsError) elMetricsError.textContent = data.error_count || 0;
+      if (elMetricsAvgDuration) elMetricsAvgDuration.textContent = `${data.avg_duration_ms || 0} ms`;
+      if (elMetricsRate) elMetricsRate.textContent = `${data.requests_per_minute || 0} req/m`;
+
+      if (elMetricsTableBody) {
+        const records = data.records || [];
+        if (records.length === 0) {
+          elMetricsTableBody.innerHTML = `<tr><td colspan="6" class="py-4 text-center text-slate-400 font-sans">No HTTP/API requests recorded in the last 60 minutes for this script.</td></tr>`;
+        } else {
+          elMetricsTableBody.innerHTML = records.map(r => {
+            const isSuccess = typeof r.status_code === "number" && r.status_code >= 200 && r.status_code < 400;
+            const isRateLimit = r.status_code === 429;
+            const statusBadgeClass = isSuccess 
+              ? "bg-emerald-100 text-emerald-800" 
+              : (isRateLimit ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-800");
+
+            return `
+              <tr class="hover:bg-slate-50 transition-colors">
+                <td class="py-1.5 px-2 text-slate-600 whitespace-nowrap">${r.timestamp || "--"}</td>
+                <td class="py-1.5 px-2 font-bold text-slate-700">${r.method || "GET"}</td>
+                <td class="py-1.5 px-2 max-w-[280px] truncate text-slate-800" title="${r.url || ''}">${r.url || "--"}</td>
+                <td class="py-1.5 px-2 whitespace-nowrap">
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold ${statusBadgeClass}">
+                    ${r.status_code}
+                  </span>
+                </td>
+                <td class="py-1.5 px-2 text-slate-600 whitespace-nowrap">${r.duration_ms} ms</td>
+                <td class="py-1.5 px-2 text-slate-500 whitespace-nowrap">${r.caller || "script"}</td>
+              </tr>
+            `;
+          }).join("");
+        }
+      }
+    } catch (e) {
+      console.error("Failed fetching script metrics:", e);
+    }
+  }
+
+  if (btnRefreshMetrics) {
+    btnRefreshMetrics.addEventListener("click", () => {
+      loadMetricsForCurrentScript();
+    });
+  }
+
+  if (btnClearMetrics) {
+    btnClearMetrics.addEventListener("click", async () => {
+      const scriptId = getCurrentScriptId();
+      if (!scriptId) return;
+      if (confirm(`Clear in-memory HTTP metrics for '${scriptId}.py'?`)) {
+        await fetch(`/api/scripts/${scriptId}/metrics/clear`, { method: "POST" });
+        loadMetricsForCurrentScript();
+      }
+    });
+  }
 
   async function refreshScriptsDropdown(selectedId = "") {
     try {
@@ -590,15 +682,29 @@ function setupScriptControls() {
       const data = await res.json();
       codeArea.value = data.code;
       scriptNameInput.value = data.id;
+      if (chkTrackHttp) {
+        chkTrackHttp.checked = data.track_http !== false;
+      }
+      loadMetricsForCurrentScript();
     }
+  });
+
+  scriptNameInput.addEventListener("input", () => {
+    loadMetricsForCurrentScript();
   });
 
   btnTest.addEventListener("click", async () => {
     outputBox.textContent = "Validating and executing...";
+    const curScriptId = getCurrentScriptId();
+    const shouldTrack = chkTrackHttp ? chkTrackHttp.checked : true;
     const res = await fetch("/api/scripts/test", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: codeArea.value })
+      body: JSON.stringify({
+        code: codeArea.value,
+        script_id: curScriptId,
+        track_http: shouldTrack
+      })
     });
     const result = await res.json();
     if (result.success) {
@@ -606,6 +712,8 @@ function setupScriptControls() {
     } else {
       outputBox.innerHTML = `<span class="text-red-600 font-semibold">✗ Error:</span> ${result.error}`;
     }
+    // Refresh metrics immediately after test execution
+    loadMetricsForCurrentScript();
   });
 
   if (btnCheckSyntax) {
@@ -653,6 +761,7 @@ function setupScriptControls() {
     }
     const cleanId = rawName.replace(/\.py$/i, "").toLowerCase().replace(/[^a-z0-9_-]/g, "_");
 
+    const shouldTrack = chkTrackHttp ? chkTrackHttp.checked : true;
     const res = await fetch("/api/scripts/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -660,13 +769,15 @@ function setupScriptControls() {
         id: cleanId,
         name: rawName,
         description: "Dynamic Python text function",
-        code: codeArea.value
+        code: codeArea.value,
+        track_http: shouldTrack
       })
     });
     const result = await res.json();
     if (result.success) {
       alert(`Script saved successfully as '${cleanId}.py'!`);
       refreshScriptsDropdown(cleanId);
+      loadMetricsForCurrentScript();
     } else {
       alert(`Error saving script: ${result.error}`);
     }
@@ -687,6 +798,7 @@ function setupScriptControls() {
   }
 
   refreshScriptsDropdown();
+  loadMetricsForCurrentScript();
 }
 
 // BLE Device Scanning & Pairing
